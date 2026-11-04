@@ -1,0 +1,32 @@
+{
+  "name": "daybook",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "日账 DayBook · 3 秒记一笔，30 秒看懂这个月钱花在哪（PRD v1.1 · Web 端 + 云同步后端）",
+  "scripts": {
+    "dev": "concurrently -n api,web -c magenta,green \"pnpm -F @daybook/api dev\" \"pnpm -F @daybook/web dev\"",
+    "dev:web": "pnpm -F @daybook/web dev",
+    "dev:api": "pnpm -F @daybook/api dev",
+    "build": "pnpm -F @daybook/web build && pnpm -F @daybook/api build",
+    "preview": "pnpm -F @daybook/web preview",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r --if-present lint",
+    "test": "pnpm -F @daybook/shared test",
+    "test:api": "node tests/api-e2e.mjs",
+    "test:e2e": "node tests/browser-e2e.mjs",
+    "db:inspect": "node tests/db-inspect.mjs",
+    "db:generate": "pnpm -F @daybook/api db:generate",
+    "db:migrate": "pnpm -F @daybook/api db:migrate",
+    "db:reset": "pnpm -F @daybook/api db:reset",
+    "auth:generate": "pnpm -F @daybook/api auth:generate"
+  },
+  "devDependencies": {
+    "@libsql/client": "^0.18.0",
+    "concurrently": "^9.2.1",
+    "typescript": "~7.0.2"
+  },
+  "engines": {
+    "node": ">=22.6"
+  }
+}

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5" />
+    <meta name="theme-color" content="#35B87A" />
+    <meta name="description" content="日账 DayBook —— 3 秒记一笔，30 秒看懂这个月钱花在哪。数据默认只存在本地。" />
+    <title>日账 DayBook · 个人财务管家</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%2335B87A'/%3E%3Cpath d='M16 7c0 6 0 7 0 12M16 13.5c-3.2 0-5.5-2.1-5.5-5.2 3.1-.5 5.3 1.4 5.5 4.6zM16 12c3.4 0 5.8-2.1 5.8-5.2-3.2-.5-5.5 1.4-5.8 4.6z' stroke='white' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+    />
+    <script>
+      // 提前应用主题，避免闪白（跟随 localStorage 中的设置）
+      (function () {
+        try {
+          var raw = localStorage.getItem("daybook.v1");
+          var mode = "system";
+          if (raw) {
+            var parsed = JSON.parse(raw);
+            mode = (parsed && parsed.state && parsed.state.settings && parsed.state.settings.theme) || "system";
+          }
+          var dark = mode === "dark" || (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

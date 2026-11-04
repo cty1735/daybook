@@ -1,0 +1,63 @@
+/* 服务入口：Hono + @hono/node-server
+   启动顺序：跑迁移（幂等）→ 挂载路由 → 监听 */
+
+import { serve } from "@hono/node-server";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { logger } from "hono/logger";
+import { auth } from "./auth.ts";
+import { runMigrations } from "./db/migrate.ts";
+import { assertProdConfig, env } from "./env.ts";
+import { accountRoutes } from "./routes/account.ts";
+import { syncRoutes } from "./routes/sync.ts";
+
+const VERSION = "1.0.0";
+
+assertProdConfig();
+await runMigrations();
+
+const app = new Hono();
+
+app.use("*", logger());
+
+// CORS：只放行已知前端来源；带 Cookie 必须显式返回来源而不能用 *
+app.use(
+  "/api/*",
+  cors({
+    origin: (origin) => (env.webOrigins.includes(origin) ? origin : null),
+    credentials: true,
+    allowHeaders: ["Content-Type", "X-Device-Id"],
+    allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+    maxAge: 600,
+  }),
+);
+
+app.get("/api/health", (c) => c.json({ ok: true, version: VERSION, time: Date.now() }));
+
+// 账号体系（注册/登录/登出/改密/设备/找回）——必须注册在 better-auth 的 catch-all 之前
+app.route("/api/auth", accountRoutes);
+
+// better-auth 其余端点挂在 /api/auth/*
+app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+
+app.route("/api/sync", syncRoutes);
+
+app.notFound((c) => c.json({ message: "接口不存在" }, 404));
+app.onError((err, c) => {
+  console.error("[daybook] 未捕获错误:", err);
+  return c.json({ message: "服务器内部错误" }, 500);
+});
+
+const server = serve({ fetch: app.fetch, hostname: env.host, port: env.port }, (info) => {
+  console.log(`[daybook] API 已启动 http://${env.host}:${info.port}（${env.nodeEnv}）`);
+  if (env.exposeDevAuth) {
+    console.log("[daybook] 开发模式：找回密码的令牌会随 /api/auth/forgot-password 响应返回");
+  }
+});
+
+const shutdown = (signal: string) => {
+  console.log(`[daybook] 收到 ${signal}，正在关闭…`);
+  server.close(() => process.exit(0));
+};
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));

@@ -1,0 +1,141 @@
+/* ================================================================
+   日账 DayBook · 设计 Token
+   来源：PRD §10 交互与视觉规范 v1.1（薄荷绿 · 轻盈可爱）
+   ================================================================ */
+
+:root {
+  /* ---------- 品牌绿阶梯 Mint ---------- */
+  --green-50: #f1fbf5;
+  --green-100: #def5e8;
+  --green-200: #bfead3;
+  --green-300: #8fdcb4;
+  --green-400: #57c994;
+  --green-500: #35b87a; /* 主色 */
+  --green-600: #2a9e67;
+  --green-700: #1f7d51;
+  --green-800: #175e3d;
+  --green-900: #0e4229;
+
+  /* ---------- 暖色点缀（仅插画/徽章/图表辅助，不参与语义） ---------- */
+  --peach: #ffb088;
+  --butter: #ffd670;
+  --sakura: #ffa8c0;
+  --sky: #7ecef4;
+  --lavender: #bfb0f2;
+
+  /* ---------- 语义色（与品牌绿解耦） ---------- */
+  --expense: #2f3e38; /* 支出：中性墨绿灰，绝不使用高饱和红 */
+  --income: #2a9e67; /* 收入：加深绿 + 向上箭头 */
+  --transfer: #6b7f76; /* 转账 / 余额调整 */
+  --budget-ok: #35b87a;
+  --budget-warn: #f5a524;
+  --budget-warn-bg: #fff1d6;
+  --budget-over: #e5534b;
+  --budget-over-bg: #ffe3e1;
+  --danger: #d6453d;
+  --info: #4a9fd8;
+
+  /* ---------- 中性色 ---------- */
+  --bg-page: #f7faf8;
+  --bg-card: #ffffff;
+  --bg-sunken: #eef4f1;
+  --border: #e4ede8;
+  --border-strong: #d3e2da;
+  --t1: #1e2a24;
+  --t2: #5c6f66;
+  --t3: #93a79d;
+  --primary: #35b87a;
+  --on-primary: #ffffff;
+
+  /* ---------- 分类色板（12 色 · 色盲友好） ---------- */
+  --cat-1: #57c994;
+  --cat-2: #2a9e67;
+  --cat-3: #a8d96b;
+  --cat-4: #7ecef4;
+  --cat-5: #6b8ce0;
+  --cat-6: #bfb0f2;
+  --cat-7: #ffa8c0;
+  --cat-8: #ffb088;
+  --cat-9: #ffd670;
+  --cat-10: #e5926b;
+  --cat-11: #6f9e86;
+  --cat-12: #8c9c94;
+
+  /* ---------- 圆角 ---------- */
+  --r-card: 24px;
+  --r-sheet: 28px;
+  --r-input: 20px;
+  --r-icon: 16px;
+  --r-pill: 999px;
+
+  /* ---------- 间距（8 的倍数） ---------- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --page-x: 20px;
+
+  /* ---------- 阴影（柔和绿调） ---------- */
+  --shadow: 0 8px 24px rgba(31, 125, 81, 0.1);
+  --shadow-lg: 0 12px 32px rgba(31, 125, 81, 0.16);
+  --fab-gradient: linear-gradient(145deg, #57c994, #35b87a);
+
+  /* ---------- 字体 ---------- */
+  --font-ui: "Nunito", "HarmonyOS Sans SC", "MiSans", system-ui, "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  --font-num: "Nunito", system-ui, sans-serif;
+
+  /* ---------- 动效 ---------- */
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --t-fast: 150ms;
+  --t-base: 240ms;
+  --t-sheet: 280ms;
+
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  /* 深色不做简单反色：提亮明度、降饱和 */
+  --green-50: #12241b;
+  --green-100: #1a3226;
+  --green-200: #24382e;
+  --green-300: #2f4c3c;
+  --green-400: #3e9e73;
+  --green-500: #4ecb90;
+  --green-600: #5fd79e;
+  --green-700: #7fe4b4;
+  --green-800: #a8eecb;
+  --green-900: #cdf6df;
+
+  --expense: #e9f4ee;
+  --income: #5fd79e;
+  --transfer: #9db3a8;
+  --budget-ok: #4ecb90;
+  --budget-warn: #ffc65c;
+  --budget-warn-bg: #3a2f16;
+  --budget-over: #ff8a80;
+  --budget-over-bg: #3d211f;
+  --danger: #ff8a80;
+  --info: #7ecef4;
+
+  --bg-page: #0f1a15;
+  --bg-card: #16241d;
+  --bg-sunken: #0c1611;
+  --border: #24382e;
+  --border-strong: #2f4638;
+  --t1: #e9f4ee;
+  --t2: #9db3a8;
+  --t3: #6e837a;
+  --primary: #4ecb90;
+  --on-primary: #06120c;
+
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --fab-gradient: linear-gradient(145deg, #4ecb90, #2a9e67);
+
+  color-scheme: dark;
+}

@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1793699823097,
+      "tag": "0000_solid_silver_samurai",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793780101259,
+      "tag": "0001_ambitious_grandmaster",
+      "breakpoints": true
+    }
+  ]
+}
