@@ -70,17 +70,19 @@ export function buildDefaultAccounts(): Account[] {
     isArchived: false,
     creditLimit: limit,
   });
+  // 新用户从零开始：初始余额一律为 0，不伪造「资产」
   return [
-    mk("现金", "cash", 50000, true),
-    mk("微信", "wallet", 320000, true),
-    mk("支付宝", "wallet", 128000, true),
-    mk("储蓄卡", "debit", 860000, true),
+    mk("现金", "cash", 0, true),
+    mk("微信", "wallet", 0, true),
+    mk("支付宝", "wallet", 0, true),
+    mk("储蓄卡", "debit", 0, true),
     mk("信用卡", "credit", 0, false, 2000000),
   ];
 }
 
 export function buildDefaultBudget(): Budget {
-  return { period: "monthly", startDay: 1, totalAmount: 500000, categoryLimits: {}, rollover: false };
+  // 不预置预算金额，首页引导用户自己设置
+  return { period: "monthly", startDay: 1, totalAmount: 0, categoryLimits: {}, rollover: false };
 }
 
 export function buildDefaultSettings(): Settings {
@@ -106,7 +108,8 @@ export function buildInitialData(): AppData {
 }
 
 /* ------------------------------------------------------------------
-   示例数据：按「今天」相对生成，保证任何时候打开都有内容可看
+   示例数据（仅手动触发「载入示例数据」时调用，新用户默认不预置）
+   按「今天」相对生成，保证任何时候载入都有内容可看
    ------------------------------------------------------------------ */
 export function buildDemoTransactions(data: AppData): AppData["transactions"] {
   const byName = (parent: string, child: string) => {
@@ -241,6 +244,46 @@ export function buildDemoTransactions(data: AppData): AppData["transactions"] {
 
 export function withDemoData(data: AppData): AppData {
   return { ...data, transactions: buildDemoTransactions(data) };
+}
+
+/* 旧版本会自动预置示例账单。这里用「备注 + 不可变时间戳」识别整本都是示例数据，
+   仅用于一次性迁移清理，绝不碰用户自己记的账。 */
+const DEMO_NOTES = new Set([
+  "楼下包子豆浆",
+  "公司楼下快餐",
+  "冰美式",
+  "洗发水与纸巾",
+  "黄焖鸡",
+  "健身房单次",
+  "上班快迟到了",
+  "同事聚餐",
+  "麻辣烫",
+  "视频会员",
+  "感冒药",
+  "机械键盘",
+  "9月水电",
+  "一个人看电影",
+  "办公室下午茶",
+  "每月房租",
+  "上月午餐",
+  "上月晚餐",
+  "上月外卖",
+  "上月咖啡",
+]);
+
+function isDemoRecord(t: AppData["transactions"][number]): boolean {
+  if (t.source !== "manual" || t.deletedAt !== null) return false;
+  if (t.createdAt !== t.updatedAt || t.createdAt !== t.occurredAt) return false;
+  if (DEMO_NOTES.has(t.note) || /^\d{1,2}月工资$/.test(t.note)) return true;
+  // 示例里有 4 条无备注的小额交通/餐饮，用金额 + 时段兜底
+  const hour = new Date(t.occurredAt).getHours();
+  return t.note === "" && [400, 800, 900, 3600].includes(t.amount) && [7, 8, 13].includes(hour);
+}
+
+/** 整本流水是否全部来自旧版自动预置的示例数据 */
+export function isLegacyDemoLedger(txs: AppData["transactions"]): boolean {
+  const active = txs.filter((t) => t.deletedAt === null);
+  return active.length > 0 && active.every(isDemoRecord);
 }
 
 export function emptyTransactions(): AppData["transactions"] {

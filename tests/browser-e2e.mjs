@@ -230,7 +230,9 @@ check("引导态已结束（出现底部导航）", rootText.includes("首页") 
 const dbInfo = await cdp.ev("window.__db()");
 check("IndexedDB 名为 daybook 且建好索引表", (dbInfo.stores ?? []).includes("transactions") && (dbInfo.stores ?? []).includes("outbox") && (dbInfo.stores ?? []).includes("snapshots"), JSON.stringify(dbInfo.stores));
 const seeded = dbInfo.count;
-check("首次启动预置示例数据（≥16 条）", seeded >= 16, `count=${seeded}`);
+check("首次启动不预置任何记录（新账本为空）", seeded === 0, `count=${seeded}`);
+const homeEmptyText = await cdp.ev("document.body.innerText");
+check("首页展示空账本引导", homeEmptyText.includes("还没有记录") && homeEmptyText.includes("点右下角记第一笔"), homeEmptyText.slice(0, 80).replace(/\n/g, "|"));
 
 // ---------- 2) 记一笔 → 写 IndexedDB ----------
 await cdp.ev("document.querySelector('.fab').click()");
@@ -272,7 +274,13 @@ await cdp.ev(`Promise.all([indexedDB.deleteDatabase('daybook')]).then(()=>true)`
 await goto("", { fresh: true });
 await cdp.ev(HELPERS);
 const beforeSync = await cdp.ev("window.__db()");
-check("重新初始化后有示例数据", (beforeSync.count ?? 0) >= 16, `count=${beforeSync.count}`);
+check("重新初始化后仍为空账本（不含示例数据）", (beforeSync.count ?? -1) === 0, `count=${beforeSync.count}`);
+
+// 记一笔，用于验证首次同步会把本机数据推上去
+await cdp.ev("document.querySelector('.fab').click()");
+await sleep(700);
+await cdp.ev("window.__pressKeys(['5','0'])");
+await sleep(900);
 
 await goto("");
 await cdp.ev(HELPERS);
@@ -317,9 +325,9 @@ await sleep(5000);
 const afterSyncText = await cdp.ev("document.body.innerText");
 const pushedN = Number((afterSyncText.match(/推送 (\d+) 条/) ?? [])[1] ?? -1);
 const pulledN = Number((afterSyncText.match(/拉取 (\d+) 条/) ?? [])[1] ?? -1);
-check("首次同步把本机全部记录上传", pushedN >= 16, `pushed=${pushedN} :: ${afterSyncText.match(/推送[^\n]{0,80}/)?.[0] ?? "无结果行"}`);
+check("首次同步把本机全部记录上传", pushedN >= 1, `pushed=${pushedN} :: ${afterSyncText.match(/推送[^\n]{0,80}/)?.[0] ?? "无结果行"}`);
 check("显示同步结果含游标推进", /游标 \d+/.test(afterSyncText), afterSyncText.match(/游标[^\n]{0,20}/)?.[0] ?? "");
-check("服务端返回了记录（拉取数 >= 本机数）", pulledN >= 16, `pulled=${pulledN}`);
+check("服务端返回了记录（拉取数 >= 本机数）", pulledN >= 1, `pulled=${pulledN}`);
 check("显示已登录用户名", afterSyncText.includes(USERNAME), USERNAME);
 check("待推送队列已清空", /0 条待推送/.test(afterSyncText), afterSyncText.match(/\d+ 条待推送/)?.[0] ?? "");
 
@@ -333,7 +341,7 @@ await sleep(2200);
 const afterLogout = await cdp.ev("document.body.innerText");
 const dbAfterLogout = await cdp.ev("window.__db()");
 check("退出登录后回到未登录态", afterLogout.includes("未登录") || afterLogout.includes("登录 / 注册"), afterLogout.slice(0, 80).replace(/\n/g, "|"));
-check("退出登录后本机数据仍保留", (dbAfterLogout.count ?? 0) >= 16, `count=${dbAfterLogout.count}`);
+check("退出登录后本机数据仍保留", (dbAfterLogout.count ?? 0) >= 1, `count=${dbAfterLogout.count}`);
 
 console.log("\n浏览器账号：" + USERNAME);
 console.log("已同步记录数：" + (await cdp.ev("window.__db()")).count);

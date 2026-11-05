@@ -14,6 +14,7 @@ import {
   buildDefaultSettings,
   buildDemoTransactions,
   buildInitialData,
+  isLegacyDemoLedger,
   mergeTransactions,
   resolveLWW,
   uid,
@@ -149,26 +150,24 @@ export const useStore = create<Store>()((set, get) => ({
       }
 
       if (!data) {
-        // 全新安装：默认分类/账户/预算，并按需预置示例数据
+        // 全新安装：默认分类/账户/预算；不预置任何示例流水，账本从零开始
         const fresh = buildInitialData();
         await repo.saveAll(fresh);
         data = fresh;
       }
 
-      const [sync, deviceId, seeded] = await Promise.all([
+      const [sync, deviceId, legacySeeded] = await Promise.all([
         repo.getSyncMeta(),
         repo.deviceId(),
         readMeta<boolean>(META.seeded, false),
       ]);
       let transactions = data.transactions;
 
-      // 首次使用预置示例数据（PRD 演示用；可在「我的 → 数据」清空）
-      if (!seeded) {
-        if (!transactions.length) {
-          transactions = buildDemoTransactions({ ...data, transactions: [] });
-          await repo.putTransactions(transactions, false);
-        }
-        await writeMeta(META.seeded, true);
+      // 一次性清理：旧版本自动预置、且整本流水都是示例账单 → 置空
+      // （只在「全部为示例数据」时触发，绝不会删掉用户自己记的账）
+      if (legacySeeded && isLegacyDemoLedger(transactions)) {
+        transactions = [];
+        await repo.clearTransactions();
       }
 
       set({
@@ -454,7 +453,6 @@ export const useStore = create<Store>()((set, get) => ({
     set({ ...fresh, outboxCount: 0 });
     void repo.saveAll(fresh);
     void repo.clearOutbox();
-    void repo.setMeta(META.seeded, true);
   },
 
   replaceAll: (data) => {

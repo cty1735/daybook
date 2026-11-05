@@ -3,9 +3,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildDemoTransactions,
   buildInitialData,
   formatAmount,
   formatMoney,
+  isLegacyDemoLedger,
   isSameTransaction,
   mapImportedTransactions,
   mergeTransactions,
@@ -159,4 +161,14 @@ test("Zod：拒绝非法流水，放行合法流水", () => {
 
 test("Zod：AppData 结构校验通过", () => {
   assert.equal(AppDataSchema.safeParse(buildInitialData()).success, true);
+});
+
+test("旧版示例账本识别：整本示例数据才会被清理", () => {
+  const data = buildInitialData();
+  const demo = buildDemoTransactions(data);
+  assert.ok(demo.length > 0);
+  assert.equal(isLegacyDemoLedger(demo), true);
+  // 混入一条用户自己记的账，就不再判定为纯示例账本
+  assert.equal(isLegacyDemoLedger([...demo, tx({ id: "mine", amount: 2000, note: "地铁月卡" })]), false);
+  assert.equal(isLegacyDemoLedger([]), false);
 });
