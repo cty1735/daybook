@@ -7,9 +7,9 @@
 #   脚本见仓库根目录 deploy.sh。详见 docs/DEPLOY-GITEE-GO.md
 #
 # 启用前置条件（Gitee 网页端）：
-#   1. 仓库页 →「流水线」→ 开通 Gitee Go（需账号绑定手机号）
-#   2. 主机管理 → 新建主机组（公网主机）→ 添加 121.89.86.53 → 执行页面给出的 Agent 安装命令
-#   3. 把下面 hostGroupID 换成实际的主机组标识（主机组详情页可见）
+#   1. 仓库页 →「流水线」→ 开通 Gitee Go
+#   2. 主机管理 → 主机组 daybook-prod → 添加主机 → 执行页面给出的 Agent 安装命令
+#   3. hostGroupID.ID 需与主机组标识一致；hostID 为 Agent 的 uuid
 
 version: '1.0'
 name: deploy
@@ -19,23 +19,31 @@ triggers:
   trigger: auto
   push:
     branches:
-      include:
+      prefix:
         - master
 
 stages:
-  - name: deploy
+  - name: stage-deploy
     displayName: 服务器构建并部署
     strategy: naturally
     trigger: auto
+    executor: []
     steps:
       - step: shell@agent
         name: deploy_shell
         displayName: 执行 deploy.sh
-        hostGroupID: daybook-prod
-        script: |
-          set -e
+        hostGroupID:
+          ID: daybook-prod
+          hostID:
+            - b3082fd1-a07d-4375-9a26-4fd703c29c60
+        script:
+          - set -e
           # 先复制到临时目录再执行：deploy.sh 自身会被 git reset --hard 覆盖，
           # 直接执行正在被改写的脚本有风险。
-          cp /opt/daybook/daybook/deploy.sh /tmp/daybook-deploy.sh
-          chmod +x /tmp/daybook-deploy.sh
-          bash /tmp/daybook-deploy.sh
+          - cp /opt/daybook/daybook/deploy.sh /tmp/daybook-deploy.sh
+          - chmod +x /tmp/daybook-deploy.sh
+          - bash /tmp/daybook-deploy.sh
+        notify: []
+        strategy:
+          retry: '0'
+          timeout: 30
