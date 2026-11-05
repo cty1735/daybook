@@ -59,6 +59,15 @@ export const TX_TYPE_LABEL: Record<string, string> = {
   adjustment: "余额调整",
 };
 
+export const ACCOUNT_TYPE_LABEL: Record<string, string> = {
+  cash: "现金",
+  debit: "储蓄卡",
+  credit: "信用卡",
+  huabei: "花呗/白条",
+  wallet: "电子钱包",
+  other: "其他",
+};
+
 export const ACTION_LABEL: Record<string, string> = {
   "user.ban": "封禁用户",
   "user.unban": "解封用户",

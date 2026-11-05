@@ -1,4 +1,5 @@
-/* 数据加载小工具：统一 loading / error / reload */
+/* 数据加载小工具：统一 loading / error / reload
+   reload(silent) —— silent=true 时不动 loading，用于轮询静默刷新（不闪屏） */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -8,9 +9,9 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []) {
   const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
 
-  const run = useCallback(async () => {
+  const run = useCallback(async (silent = false) => {
     const my = ++seq.current;
-    setLoading(true);
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const r = await fn();

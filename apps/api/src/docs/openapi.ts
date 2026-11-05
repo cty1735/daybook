@@ -105,10 +105,10 @@ const adminPaths = {
       tags: adminTag,
       operationId: "adminOverview",
       summary: "概览指标",
-      description: "用户数、流水数、今日新增、7 日活跃会话、设备数、近 7 日流水趋势。",
+      description: "用户数、流水数、今日新增（含今日收支金额）、最近写入时间、7 日活跃会话、设备数、近 7 日流水趋势。全部读自服务端 ledger_transactions（与前台 /api/data 同一份数据）。",
       security: [{ cookieAuth: [] }],
       responses: {
-        200: adminOk("指标", { data: { users: 27, admins: 1, banned: 0, transactions: 69, liveTransactions: 62, todayTransactions: 25, activeSessions7d: 25, devices: 7, trend: [{ day: "2026-11-04", count: 25 }] } }),
+        200: adminOk("指标", { data: { users: 27, admins: 1, banned: 0, transactions: 69, liveTransactions: 62, todayTransactions: 25, todayExpense: 12800, todayIncome: 0, lastWriteAt: 1793862629821, activeSessions7d: 25, devices: 7, trend: [{ day: "2026-11-04", count: 25 }] } }),
         401: adminFail("未登录"),
         403: adminFail("无后台权限"),
       },

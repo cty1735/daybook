@@ -780,7 +780,7 @@ Invoke-RestMethod -Uri "$base/api/sync/pull?cursor=0&limit=10" -WebSession $sess
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/admin/overview` | 前台用户数 / 后台管理员数 / 封禁数 / 流水数 / 今日新增 / 7 日活跃会话 / 设备数 / 近 7 日趋势 |
+| GET | `/api/admin/overview` | 前台用户数 / 后台管理员数 / 封禁数 / 流水数 / 今日新增（含今日收支金额）/ 7 日活跃会话 / 设备数 / 最近写入时间 / 近 7 日趋势 |
 
 `overview` 响应示例：
 
@@ -789,21 +789,28 @@ Invoke-RestMethod -Uri "$base/api/sync/pull?cursor=0&limit=10" -WebSession $sess
   "data": {
     "users": 27, "admins": 2, "banned": 1,
     "transactions": 69, "liveTransactions": 62,
-    "todayTransactions": 25, "activeSessions7d": 25, "devices": 7,
+    "todayTransactions": 25, "todayExpense": 12800, "todayIncome": 0,
+    "lastWriteAt": 1793862629821,
+    "activeSessions7d": 25, "devices": 7,
     "trend": [{ "day": "2026-11-04", "count": 25 }]
   }
 }
 ```
 
+> 后台所有数字都直接读服务端的 `ledger_transactions` / `user_state`——也就是前台 `/api/data` 写入的同一份数据。
+> 前台一改动，后台刷新（概览页默认 15 秒自动刷新）即可看到，不再存在「前台记了账、后台还是 0」的两套库。
+
 ### 10.4 用户管理（前台用户）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/admin/users` | 列表。参数：`q`（用户名/显示名/邮箱模糊搜，不区分大小写）、`banned=0\|1`、`sort=created\|lastLogin`、`cursor`、`limit`(≤100) |
-| GET | `/api/admin/users/:id` | 详情：资料、会话、同步设备、流水统计、`user_state` 体积、最近 10 条流水 |
+| GET | `/api/admin/users` | 列表。参数：`q`（用户名/显示名/邮箱模糊搜，不区分大小写）、`banned=0\|1`、`sort=created\|lastLogin`、`cursor`、`limit`(≤100)。每条附带该用户的流水概况 `transactions: { total, live, lastOccurredAt }` |
+| GET | `/api/admin/users/:id` | 详情：资料、会话、同步设备、流水统计、`user_state` 体积、**账本结构 `ledger`（分类 / 账户 / 预算 / 偏好）**、最近 10 条流水（含分类名 / 账户名 / 备注） |
 | POST | `/api/admin/users/:id/ban` | 封禁。body `{ reason?, expiresIn? }`（`expiresIn` 单位秒）。**同时删除该用户全部会话** |
 | POST | `/api/admin/users/:id/unban` | 解封（清 `banned` / `banReason` / `banExpires`，`status` 回 `active`） |
 | POST | `/api/admin/users/:id/revoke-sessions` | 强制下线（删除全部会话，本机数据不动） |
+
+> 账本结构来自该用户的 `user_state.payload`，与前台的分类管理 / 账户管理 / 预算设置完全同源；后台只读展示，不替用户改账本。
 
 > 后台管理员在「管理员账号」页单独管理，**不再**通过给前台用户提权来获得后台权限；原 `/api/admin/users/:id/role` 已移除。
 
@@ -813,8 +820,8 @@ Invoke-RestMethod -Uri "$base/api/sync/pull?cursor=0&limit=10" -WebSession $sess
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/admin/transactions` | 参数：`userId`、`from`/`to`（毫秒或 ISO 字符串）、`type`、`minAmount`/`maxAmount`（**分**）、`categoryId`、`includeDeleted=1`、`cursor`、`limit`(≤200) |
-| GET | `/api/admin/transactions/:id` | 详情，含原始 `payload`；建议带 `?userId=` 一起定位 |
+| GET | `/api/admin/transactions` | 参数：`userId`、`from`/`to`（毫秒或 ISO 字符串）、`type`、`minAmount`/`maxAmount`（**分**）、`categoryId`、`includeDeleted=1`、`cursor`、`limit`(≤200)。返回 `categoryName` / `parentCategoryName` / `accountName` / `note`，与前台展示一致 |
+| GET | `/api/admin/transactions/:id` | 详情，含原始 `payload` 与解析后的分类名 / 账户名 / 备注；建议带 `?userId=` 一起定位 |
 | POST | `/api/admin/transactions/:id/delete` | 软删：写墓碑 + **重新分配 `seq`** |
 | POST | `/api/admin/transactions/:id/restore` | 恢复：清墓碑 + 重新分配 `seq` |
 

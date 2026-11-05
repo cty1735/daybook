@@ -126,6 +126,7 @@ section("后台独立账号：登录与鉴权基线");
   ok("概览含用户数", typeof r.body?.data?.users === "number", JSON.stringify(r.body?.data));
   ok("概览含管理员数", typeof r.body?.data?.admins === "number", JSON.stringify(r.body?.data));
   ok("概览含 7 日趋势数组", Array.isArray(r.body?.data?.trend), "trend missing");
+  ok("概览含今日收支金额", typeof r.body?.data?.todayExpense === "number" && typeof r.body?.data?.todayIncome === "number", JSON.stringify(r.body?.data));
 }
 
 let victimId = null;
@@ -142,6 +143,8 @@ section("用户列表与详情");
   ok("详情不含密码/哈希/令牌", !/password|code_hash|tokenHash|"token"/.test(JSON.stringify(detail.body)), "疑似泄漏敏感字段");
   ok("详情含 sessions 数组", Array.isArray(detail.body?.data?.sessions), "sessions missing");
   ok("详情含 transactions 统计", typeof detail.body?.data?.transactions?.total === "number", "tx stat missing");
+  ok("列表带流水概况", typeof list.body?.data?.[0]?.transactions?.total === "number", "transactions summary missing");
+  ok("详情含账本结构字段 ledger", "ledger" in (detail.body?.data ?? {}), "ledger missing");
 }
 
 section("封禁 → 登录被拦截 → 解封");
@@ -192,6 +195,7 @@ section("流水审计：物化列筛选");
   const list = await req("admin", "/api/admin/transactions?limit=5");
   ok("流水列表 200", list.status === 200 && Array.isArray(list.body?.data), `got ${list.status}`);
   ok("流水带 amount/type/username", typeof list.body?.data?.[0]?.amount === "number" && list.body?.data?.[0]?.type, "字段缺失");
+  ok("流水带前台口径的分类名/备注字段", "categoryName" in (list.body?.data?.[0] ?? {}) && typeof list.body?.data?.[0]?.note === "string", "名称解析字段缺失");
   ok("列表默认不含墓碑", list.body?.data?.every((t) => t.deleted === false), "出现已删除记录");
 
   const withDel = await req("admin", "/api/admin/transactions?limit=5&includeDeleted=1");

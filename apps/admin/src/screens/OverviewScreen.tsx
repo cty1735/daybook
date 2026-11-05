@@ -1,14 +1,31 @@
-/* 概览：核心指标 + 7 日流水趋势 + 收支构成 */
+/* 概览：核心指标 + 7 日流水趋势 + 收支构成
+   前台一写入服务端就会出现在这里，所以页面默认 15 秒静默轮询一次，
+   运营不需要手动刷新也不会看到过期数字（可关闭自动刷新）。 */
 
+import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { yuan, dt, rel } from "../lib/format";
+import { dt, rel, yuan } from "../lib/format";
 import { useAsync } from "../lib/useAsync";
 import { SplitDonut, TrendBars } from "../components/Charts";
 import { navigate } from "../lib/router";
 
 export function OverviewScreen() {
-  const { data, loading, error } = useAsync(() => api.overview(), []);
+  const [auto, setAuto] = useState(true);
+  const [refreshedAt, setRefreshedAt] = useState(() => Date.now());
+
+  const { data, loading, error, reload } = useAsync(() => api.overview(), []);
   const totals = useAsync(() => api.statsTotals(), []);
+
+  useEffect(() => {
+    if (!auto) return;
+    const t = setInterval(() => {
+      if (document.hidden) return;
+      void reload(true);
+      void totals.reload(true);
+      setRefreshedAt(Date.now());
+    }, 15_000);
+    return () => clearInterval(t);
+  }, [auto, reload, totals]);
 
   if (loading) return <div className="loading">加载中…</div>;
   if (error) return <div className="error-box">{error}</div>;
@@ -17,12 +34,28 @@ export function OverviewScreen() {
   const o = data.data;
   const t = totals.data?.data;
 
+  const refresh = () => {
+    void reload(true);
+    void totals.reload(true);
+    setRefreshedAt(Date.now());
+  };
+
   return (
     <>
       <div className="page-head">
         <div>
           <div className="page-title">概览</div>
-          <div className="page-desc">全站用户、流水与同步状态一屏掌握</div>
+          <div className="page-desc">全站用户、流水与同步状态一屏掌握（与前台账本同一份服务端数据）</div>
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 12.5, color: "var(--t3)" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+            <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
+            自动刷新（15s）
+          </label>
+          <span>刷新于 {dt(refreshedAt)}</span>
+          <button className="btn sm" onClick={refresh}>
+            立即刷新
+          </button>
         </div>
       </div>
 
@@ -42,7 +75,9 @@ export function OverviewScreen() {
         <div className="stat">
           <div className="stat-k">今日新增流水</div>
           <div className="stat-v">{o.todayTransactions}</div>
-          <div className="stat-sub">按发生时间统计</div>
+          <div className="stat-sub">
+            支出 {yuan(o.todayExpense)} · 收入 {yuan(o.todayIncome)}
+          </div>
         </div>
         <div className="stat">
           <div className="stat-k">7 日内活跃会话</div>
@@ -95,7 +130,7 @@ export function OverviewScreen() {
           </button>
         </div>
         <div style={{ marginTop: 12, fontSize: 12, color: "var(--t3)" }}>
-          数据统计截至 {dt(Date.now())} · 相对时间示例 {rel(Date.now() - 3600_000)}
+          最近写入 {rel(o.lastWriteAt)}（{dt(o.lastWriteAt)}） · 相对时间示例 {rel(Date.now() - 3600_000)}
         </div>
       </div>
     </>

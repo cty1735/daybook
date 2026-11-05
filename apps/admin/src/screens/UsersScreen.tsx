@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type UserDetail, type UserRow } from "../lib/api";
-import { dt, rel } from "../lib/format";
+import { ACCOUNT_TYPE_LABEL, bytes, dt, rel, TX_TYPE_LABEL, yuan } from "../lib/format";
 import { useFeedback } from "../components/feedback";
 import { navigate } from "../lib/router";
 
@@ -89,6 +89,7 @@ export function UsersScreen({ focusId }: { focusId?: string }) {
                 <th>用户名</th>
                 <th>邮箱</th>
                 <th>状态</th>
+                <th style={{ textAlign: "right" }}>流水</th>
                 <th>注册时间</th>
                 <th>最后登录</th>
                 <th />
@@ -109,6 +110,12 @@ export function UsersScreen({ focusId }: { focusId?: string }) {
                       </span>
                     ) : (
                       <span className="chip ok">正常</span>
+                    )}
+                  </td>
+                  <td className="num" style={{ textAlign: "right" }} title={u.transactions.lastOccurredAt ? `最近 ${dt(u.transactions.lastOccurredAt)}` : "暂无流水"}>
+                    {u.transactions.live}
+                    {u.transactions.total !== u.transactions.live && (
+                      <span style={{ color: "var(--t3)" }}> / {u.transactions.total}</span>
                     )}
                   </td>
                   <td className="num" style={{ color: "var(--t3)" }}>
@@ -316,8 +323,94 @@ function UserDrawer({
                 <dt>同步序号</dt>
                 <dd className="num">{data.transactions.lastSeq}</dd>
                 <dt>用户状态包</dt>
-                <dd>{data.state ? `${dt(data.state.updatedAt)} 更新` : "尚未上传"}</dd>
+                <dd>{data.state ? `${dt(data.state.updatedAt)} 更新 · ${bytes(data.state.bytes)}` : "尚未上传"}</dd>
+                <dt>分类 / 账户</dt>
+                <dd className="num">
+                  {data.ledger
+                    ? `${data.ledger.categories.length} 个分类 · ${data.ledger.accounts.length} 个账户`
+                    : "—"}
+                </dd>
+                <dt>月度预算</dt>
+                <dd className="num">
+                  {data.ledger?.budget ? yuan(data.ledger.budget.totalAmount) : "—"}
+                  {data.ledger?.budget && data.ledger.budget.totalAmount > 0 && (
+                    <span style={{ marginLeft: 8, color: "var(--t3)", fontSize: 11.5 }}>
+                      起始日 {data.ledger.budget.startDay} · 分类预算 {Object.keys(data.ledger.budget.categoryLimits ?? {}).length} 项
+                    </span>
+                  )}
+                </dd>
               </dl>
+            </div>
+
+            <div className="section-title">账本结构（与前台同源）</div>
+            <div className="card">
+              {!data.ledger ? (
+                <div className="empty">该用户还没有上传账本状态</div>
+              ) : (
+                <>
+                  <div style={{ fontSize: 12.5, color: "var(--t2)", marginBottom: 8 }}>
+                    分类 {data.ledger.categories.filter((c) => !c.parentId).length} 个一级 /{" "}
+                    {data.ledger.categories.filter((c) => c.parentId).length} 个二级
+                  </div>
+                  <div className="chip-row">
+                    {data.ledger.categories
+                      .slice()
+                      .sort((a, b) => String(a.parentId ?? "").localeCompare(String(b.parentId ?? "")) || a.sortOrder - b.sortOrder)
+                      .map((c) => (
+                        <span
+                          key={c.id}
+                          className="chip"
+                          style={{
+                            borderColor: c.color + "55",
+                            background: c.color + "14",
+                            marginBottom: 6,
+                            opacity: c.isHidden ? 0.5 : 1,
+                          }}
+                          title={`${c.id}${c.isHidden ? " · 已隐藏" : ""}`}
+                        >
+                          {c.parentId ? "└ " : ""}
+                          {c.name}
+                          <span style={{ color: "var(--t3)", marginLeft: 6 }}>
+                            {c.kind === "income" ? "收入" : "支出"}
+                          </span>
+                        </span>
+                      ))}
+                  </div>
+
+                  <div className="section-title" style={{ margin: "14px 0 8px" }}>账户</div>
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>账户</th>
+                          <th>类型</th>
+                          <th style={{ textAlign: "right" }}>初始余额</th>
+                          <th>计入资产</th>
+                          <th>状态</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.ledger.accounts.map((a) => (
+                          <tr key={a.id}>
+                            <td>{a.name}</td>
+                            <td style={{ color: "var(--t3)" }}>{ACCOUNT_TYPE_LABEL[a.type as keyof typeof ACCOUNT_TYPE_LABEL] ?? a.type}</td>
+                            <td className="num" style={{ textAlign: "right" }}>{yuan(a.initialBalance)}</td>
+                            <td>{a.includeInAssets ? "是" : "否"}</td>
+                            <td>
+                              {a.isArchived ? <span className="chip over">已归档</span> : <span className="chip ok">启用</span>}
+                            </td>
+                          </tr>
+                        ))}
+                        {data.ledger.accounts.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="empty">没有账户</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="section-title">已登录设备（{data.sessions.length}）</div>
@@ -385,8 +478,10 @@ function UserDrawer({
                   <thead>
                     <tr>
                       <th>发生时间</th>
-                      <th>金额</th>
                       <th>类型</th>
+                      <th>分类</th>
+                      <th>备注</th>
+                      <th style={{ textAlign: "right" }}>金额</th>
                       <th>状态</th>
                     </tr>
                   </thead>
@@ -394,8 +489,14 @@ function UserDrawer({
                     {data.recentTransactions.map((t) => (
                       <tr key={t.id}>
                         <td className="num" style={{ color: "var(--t3)" }}>{dt(t.occurredAt)}</td>
-                        <td className="num">{t.amount}</td>
-                        <td>{t.type}</td>
+                        <td>{TX_TYPE_LABEL[t.type] ?? t.type}</td>
+                        <td style={{ fontSize: 12 }}>
+                          {t.parentCategoryName && t.parentCategoryName !== t.categoryName
+                            ? `${t.parentCategoryName} / ${t.categoryName ?? "—"}`
+                            : (t.categoryName ?? "—")}
+                        </td>
+                        <td style={{ fontSize: 12, color: "var(--t2)" }}>{t.note || "—"}</td>
+                        <td className="num" style={{ textAlign: "right" }}>{yuan(t.amount)}</td>
                         <td>{t.deleted ? <span className="chip over">已删除</span> : <span className="chip ok">有效</span>}</td>
                       </tr>
                     ))}

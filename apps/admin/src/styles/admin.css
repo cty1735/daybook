@@ -432,6 +432,17 @@ html[data-theme="dark"] tbody tr:hover {
   color: var(--t3);
 }
 
+/* 分类徽标流式排列（用户账本里展示分类树） */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip-row .chip {
+  border: 1px solid var(--line);
+}
+
 html[data-theme="dark"] .chip.warn {
   color: var(--budget-warn);
 }

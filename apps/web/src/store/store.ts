@@ -22,6 +22,7 @@ import {
   type TxType,
 } from "@daybook/shared";
 import { api } from "../lib/api";
+import { markLegacyImported, mergeLegacyInto } from "../lib/legacy-import";
 
 export interface NewTxInput {
   type: TxType;
@@ -155,6 +156,31 @@ export const useStore = create<Store>()((set, get) => ({
         return;
       }
       const data = await api.getData();
+
+      // 首次切到服务端：把旧版本地 IndexedDB 里还没上传的账本合并上来（只做一次）
+      const merged = await mergeLegacyInto(data);
+      if (merged) {
+        try {
+          await api.saveTransactions(merged.transactions);
+          await api.saveState({
+            categories: merged.categories,
+            accounts: merged.accounts,
+            budget: merged.budget,
+            settings: merged.settings,
+            categoryUsage: merged.categoryUsage,
+            lastUsedCategoryId: merged.lastUsedCategoryId,
+            lastUsedAccountId: merged.lastUsedAccountId,
+          });
+          markLegacyImported();
+          const fresh = await api.getData();
+          set({ ...fresh, status: "ready", initError: null });
+          mirrorTheme(fresh.settings.theme);
+          return;
+        } catch {
+          /* 搬家失败不阻断启动：下次登录会重试 */
+        }
+      }
+
       set({ ...data, status: "ready", initError: null });
       mirrorTheme(data.settings.theme);
     } catch (err) {

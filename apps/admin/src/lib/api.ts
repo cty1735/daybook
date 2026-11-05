@@ -68,6 +68,11 @@ export interface Overview {
   transactions: number;
   liveTransactions: number;
   todayTransactions: number;
+  /** 今日（按发生时间）收支金额，单位分 */
+  todayExpense: number;
+  todayIncome: number;
+  /** 最近一次流水写入时间（服务端收到的时间） */
+  lastWriteAt: number | null;
   activeSessions7d: number;
   devices: number;
   trend: { day: string; count: number }[];
@@ -85,6 +90,44 @@ export interface UserRow {
   status: string;
   createdAt: number | null;
   lastLoginAt: number | null;
+  /** 该用户的流水概况（与前台账本同一份数据） */
+  transactions: { total: number; live: number; lastOccurredAt: number | null };
+}
+
+export interface LedgerCategory {
+  id: string;
+  parentId: string | null;
+  name: string;
+  kind: "expense" | "income";
+  icon: string;
+  color: string;
+  sortOrder: number;
+  isHidden: boolean;
+  noteTemplate: string;
+}
+
+export interface LedgerAccount {
+  id: string;
+  name: string;
+  type: string;
+  initialBalance: number;
+  includeInAssets: boolean;
+  isArchived: boolean;
+  creditLimit: number;
+}
+
+export interface LedgerSummary {
+  updatedAt: number;
+  categories: LedgerCategory[];
+  accounts: LedgerAccount[];
+  budget: {
+    period: string;
+    startDay: number;
+    totalAmount: number;
+    categoryLimits: Record<string, number>;
+    rollover: boolean;
+  } | null;
+  settings: { theme: string; usageStats: boolean } | null;
 }
 
 export interface UserDetail {
@@ -100,7 +143,20 @@ export interface UserDetail {
   devices: { id: string; lastSeenAt: number; pushes: number; pulls: number }[];
   transactions: { total: number; live: number; lastOccurredAt: number | null; lastSeq: number };
   state: { updatedAt: number; bytes: number } | null;
-  recentTransactions: { id: string; amount: number; type: string; occurredAt: number; deleted: boolean }[];
+  /** 账本结构（分类 / 账户 / 预算 / 偏好），未上传过状态时为 null */
+  ledger: LedgerSummary | null;
+  recentTransactions: {
+    id: string;
+    amount: number;
+    type: string;
+    categoryId: string | null;
+    categoryName: string | null;
+    parentCategoryName: string | null;
+    accountName: string | null;
+    note: string;
+    occurredAt: number;
+    deleted: boolean;
+  }[];
 }
 
 export interface TxRow {
@@ -110,6 +166,12 @@ export interface TxRow {
   amount: number;
   type: string;
   categoryId: string | null;
+  categoryName: string | null;
+  parentCategoryId: string | null;
+  parentCategoryName: string | null;
+  accountId: string | null;
+  accountName: string | null;
+  note: string;
   occurredAt: number;
   updatedAt: number;
   deleted: boolean;

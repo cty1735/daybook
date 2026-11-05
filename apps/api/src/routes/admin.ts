@@ -17,6 +17,7 @@ import { adminAuditLog, adminSession, adminUser, devices, ledgerTransactions, us
 import type { Transaction } from "@daybook/shared";
 import { auditContext, isGuardOk, maskEmail, requireAdmin, writeAudit } from "../lib/admin-guard.ts";
 import { deviceLabel } from "../lib/account-service.ts";
+import { ledgerNameMaps, loadLedgerSummary, type LedgerNames } from "../lib/ledger-view.ts";
 
 export const adminRoutes = new Hono();
 
@@ -57,6 +58,28 @@ async function nextSeq(userId: string): Promise<number> {
   return Number(rows[0]?.maxSeq ?? 0) + 1;
 }
 
+/** 从 payload 里取出列表页要用、但没物化成列的字段 */
+function txExtras(payload: string): { note: string; accountId: string | null; parentCategoryId: string | null } {
+  try {
+    const t = JSON.parse(payload) as Partial<Transaction>;
+    return {
+      note: typeof t.note === "string" ? t.note : "",
+      accountId: t.accountId ?? null,
+      parentCategoryId: t.parentCategoryId ?? null,
+    };
+  } catch {
+    return { note: "", accountId: null, parentCategoryId: null };
+  }
+}
+
+/** 把 id 翻译成前台看到的名字；缺失时回退 null，前端显示「—」 */
+function nameLookup(names: LedgerNames) {
+  return {
+    category: (id: string | null) => (id ? (names.category.get(id)?.name ?? null) : null),
+    account: (id: string | null) => (id ? (names.account.get(id)?.name ?? null) : null),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 当前管理员身份（前端守卫用）
 // ---------------------------------------------------------------------------
@@ -83,9 +106,21 @@ adminRoutes.get("/overview", async (c) => {
     .from(ledgerTransactions);
 
   const today = await db
-    .select({ n: sql<number>`count(*)` })
+    .select({
+      n: sql<number>`count(*)`,
+      type: ledgerTransactions.txType,
+      amount: sql<number>`coalesce(sum(${ledgerTransactions.amount}), 0)`,
+    })
     .from(ledgerTransactions)
-    .where(and(gte(ledgerTransactions.occurredAt, dayStart.getTime()), sql`${ledgerTransactions.deletedAt} is null`));
+    .where(and(gte(ledgerTransactions.occurredAt, dayStart.getTime()), sql`${ledgerTransactions.deletedAt} is null`))
+    .groupBy(ledgerTransactions.txType);
+
+  const todayByType: Record<string, { count: number; amount: number }> = {};
+  for (const r of today) todayByType[r.type] = { count: Number(r.n), amount: Number(r.amount) };
+
+  const lastWrite = await db
+    .select({ t: sql<number>`coalesce(max(${ledgerTransactions.updatedAt}), 0)` })
+    .from(ledgerTransactions);
 
   const activeUsers = await db
     .select({ n: sql<number>`count(*)` })
@@ -122,7 +157,10 @@ adminRoutes.get("/overview", async (c) => {
       banned: totalBanned,
       transactions: Number(txAll[0]?.n ?? 0),
       liveTransactions: Number(txAll[0]?.live ?? 0),
-      todayTransactions: Number(today[0]?.n ?? 0),
+      todayTransactions: (todayByType.expense?.count ?? 0) + (todayByType.income?.count ?? 0) + (todayByType.transfer?.count ?? 0) + (todayByType.adjustment?.count ?? 0),
+      todayExpense: todayByType.expense?.amount ?? 0,
+      todayIncome: todayByType.income?.amount ?? 0,
+      lastWriteAt: Number(lastWrite[0]?.t ?? 0) || null,
       activeSessions7d: Number(activeUsers[0]?.n ?? 0),
       devices: Number(devCount[0]?.n ?? 0),
       trend: trend.map((t) => ({ day: t.day, count: Number(t.n) })),
@@ -193,6 +231,23 @@ adminRoutes.get("/users", async (c) => {
   const page = hasMore ? rows.slice(0, limit) : rows;
   const last = page[page.length - 1];
 
+  // 每个用户的流水条数（与流水审计/统计同一份数据）
+  const counts = page.length
+    ? await db
+        .select({
+          userId: ledgerTransactions.userId,
+          n: sql<number>`count(*)`,
+          live: sql<number>`sum(case when deleted_at is null then 1 else 0 end)`,
+          lastOccurred: sql<number>`max(${ledgerTransactions.occurredAt})`,
+        })
+        .from(ledgerTransactions)
+        .where(inArray(ledgerTransactions.userId, page.map((u) => u.id)))
+        .groupBy(ledgerTransactions.userId)
+    : [];
+  const countMap = new Map(
+    counts.map((c) => [c.userId, { total: Number(c.n), live: Number(c.live ?? 0), lastOccurredAt: Number(c.lastOccurred) || null }]),
+  );
+
   return c.json({
     data: page.map((u) => ({
       id: u.id,
@@ -206,6 +261,7 @@ adminRoutes.get("/users", async (c) => {
       status: u.status,
       createdAt: u.createdAt ? u.createdAt.getTime() : null,
       lastLoginAt: u.lastLoginAt ? u.lastLoginAt.getTime() : null,
+      transactions: countMap.get(u.id) ?? { total: 0, live: 0, lastOccurredAt: null },
     })),
     nextCursor: hasMore && last
       ? encodeCursor(
@@ -257,14 +313,21 @@ adminRoutes.get("/users/:id", async (c) => {
         id: ledgerTransactions.id,
         amount: ledgerTransactions.amount,
         txType: ledgerTransactions.txType,
+        categoryId: ledgerTransactions.categoryId,
         occurredAt: ledgerTransactions.occurredAt,
         deletedAt: ledgerTransactions.deletedAt,
+        payload: ledgerTransactions.payload,
       })
       .from(ledgerTransactions)
       .where(eq(ledgerTransactions.userId, id))
       .orderBy(desc(ledgerTransactions.occurredAt))
       .limit(10),
   ]);
+
+  // 该用户的账本结构（分类 / 账户 / 预算 / 偏好）与前台完全同源
+  const ledger = await loadLedgerSummary(id);
+  const ledgerNames = await ledgerNameMaps([id]);
+  const lookup = nameLookup(ledgerNames);
 
   return c.json({
     data: {
@@ -305,13 +368,31 @@ adminRoutes.get("/users/:id", async (c) => {
       state: stateRow[0]
         ? { updatedAt: stateRow[0].updatedAt, bytes: Buffer.byteLength(stateRow[0].payload, "utf8") }
         : null,
-      recentTransactions: recentTx.map((t) => ({
-        id: t.id,
-        amount: t.amount,
-        type: t.txType,
-        occurredAt: t.occurredAt,
-        deleted: t.deletedAt !== null,
-      })),
+      /** 账本结构：分类树 / 账户 / 预算 / 偏好（未上传过状态时为 null） */
+      ledger: ledger
+        ? {
+            updatedAt: ledger.updatedAt,
+            categories: ledger.categories,
+            accounts: ledger.accounts,
+            budget: ledger.budget,
+            settings: ledger.settings,
+          }
+        : null,
+      recentTransactions: recentTx.map((t) => {
+        const extra = txExtras(t.payload);
+        return {
+          id: t.id,
+          amount: t.amount,
+          type: t.txType,
+          categoryId: t.categoryId,
+          categoryName: lookup.category(t.categoryId),
+          parentCategoryName: lookup.category(extra.parentCategoryId),
+          accountName: lookup.account(extra.accountId),
+          note: extra.note,
+          occurredAt: t.occurredAt,
+          deleted: t.deletedAt !== null,
+        };
+      }),
     },
   });
 });
@@ -445,6 +526,7 @@ adminRoutes.get("/transactions", async (c) => {
       updatedAt: ledgerTransactions.updatedAt,
       deletedAt: ledgerTransactions.deletedAt,
       seq: ledgerTransactions.seq,
+      payload: ledgerTransactions.payload,
     })
     .from(ledgerTransactions)
     .where(where.length ? and(...where) : undefined)
@@ -465,19 +547,32 @@ adminRoutes.get("/transactions", async (c) => {
     : [];
   const nameMap = new Map(names.map((n) => [n.id, n.displayUsername || n.username || n.id]));
 
+  // 分类 / 账户名来自各用户的 user_state（与前台同一份数据）
+  const ledger = uids.length ? await ledgerNameMaps(uids) : { category: new Map(), account: new Map() };
+  const lookup = nameLookup(ledger);
+
   return c.json({
-    data: page.map((r) => ({
-      id: r.id,
-      userId: r.userId,
-      username: nameMap.get(r.userId) ?? r.userId,
-      amount: r.amount,
-      type: r.txType,
-      categoryId: r.categoryId,
-      occurredAt: r.occurredAt,
-      updatedAt: r.updatedAt,
-      deleted: r.deletedAt !== null,
-      seq: r.seq,
-    })),
+    data: page.map((r) => {
+      const extra = txExtras(r.payload);
+      return {
+        id: r.id,
+        userId: r.userId,
+        username: nameMap.get(r.userId) ?? r.userId,
+        amount: r.amount,
+        type: r.txType,
+        categoryId: r.categoryId,
+        categoryName: lookup.category(r.categoryId),
+        parentCategoryId: extra.parentCategoryId,
+        parentCategoryName: lookup.category(extra.parentCategoryId),
+        accountId: extra.accountId,
+        accountName: lookup.account(extra.accountId),
+        note: extra.note,
+        occurredAt: r.occurredAt,
+        updatedAt: r.updatedAt,
+        deleted: r.deletedAt !== null,
+        seq: r.seq,
+      };
+    }),
     nextCursor: hasMore && last ? encodeCursor(last.key, last.id) : null,
   });
 });
@@ -504,6 +599,10 @@ adminRoutes.get("/transactions/:id", async (c) => {
     payload = null;
   }
 
+  const ledger = await ledgerNameMaps([row.userId]);
+  const lookup = nameLookup(ledger);
+  const extra = txExtras(row.payload);
+
   return c.json({
     data: {
       id: row.id,
@@ -512,6 +611,12 @@ adminRoutes.get("/transactions/:id", async (c) => {
       amount: row.amount,
       type: row.txType,
       categoryId: row.categoryId,
+      categoryName: lookup.category(row.categoryId),
+      parentCategoryId: extra.parentCategoryId,
+      parentCategoryName: lookup.category(extra.parentCategoryId),
+      accountId: extra.accountId,
+      accountName: lookup.account(extra.accountId),
+      note: extra.note,
       occurredAt: row.occurredAt,
       updatedAt: row.updatedAt,
       deletedAt: row.deletedAt,
@@ -704,19 +809,8 @@ adminRoutes.get("/stats/categories", async (c) => {
 
 /** 扫描所有 user_state，汇总分类 id → 名称（同名不同 id 不合并，取首个出现的名字） */
 async function categoryNameMap(): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
-  const rows = await db.select({ payload: userState.payload }).from(userState);
-  for (const row of rows) {
-    try {
-      const st = JSON.parse(row.payload) as { categories?: { id: string; name: string }[] };
-      for (const c of st.categories ?? []) {
-        if (c?.id && c?.name && !map.has(c.id)) map.set(c.id, c.name);
-      }
-    } catch {
-      /* 单条损坏不影响整体统计 */
-    }
-  }
-  return map;
+  const maps = await ledgerNameMaps();
+  return new Map([...maps.category].map(([id, c]) => [id, c.name]));
 }
 
 adminRoutes.get("/stats/daily", async (c) => {
