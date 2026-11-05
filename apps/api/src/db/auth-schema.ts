@@ -7,7 +7,11 @@
    - user.last_login_at：最近登录时间
    - user_recovery：恢复码哈希（单独存表，避免随 getSession 的 user 对象回传给前端）
    - login_attempt / login_ip：登录失败计数、锁定与 IP 限流
-   - password_reset：邮箱找回密码的一次性令牌（只存 SHA-256） */
+   - password_reset：邮箱找回密码的一次性令牌（只存 SHA-256）
+
+   v1.3（管理后台）新增 better-auth admin 插件字段：
+   - user.role / banned / ban_reason / ban_expires（封禁是登录拦截的唯一真相源）
+   - session.impersonated_by（本期不用，先随插件落库） */
 
 import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
@@ -23,6 +27,12 @@ export const user = sqliteTable("user", {
   displayUsername: text("display_username"),
   /** active / locked / disabled（本期只写 active） */
   status: text("status").notNull().default("active"),
+  /** admin 插件：'user' | 'admin'（可逗号分隔多角色） */
+  role: text("role"),
+  /** admin 插件：封禁标记，登录时由插件拦截 */
+  banned: integer("banned", { mode: "boolean" }).notNull().default(false),
+  banReason: text("ban_reason"),
+  banExpires: integer("ban_expires", { mode: "timestamp_ms" }),
   lastLoginAt: integer("last_login_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
@@ -38,6 +48,8 @@ export const session = sqliteTable(
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
     ipAddress: text("ip_address"),
     userAgent: text("user_agent"),
+    /** admin 插件：被谁模拟登录（本期不使用） */
+    impersonatedBy: text("impersonated_by"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),

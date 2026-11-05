@@ -5,7 +5,7 @@
 
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { betterAuth } from "better-auth";
-import { username } from "better-auth/plugins";
+import { admin, username } from "better-auth/plugins";
 import * as appSchema from "./db/schema.ts";
 import { authSchema } from "./db/auth-schema.ts";
 import { db } from "./db/client.ts";
@@ -43,6 +43,13 @@ export const auth = betterAuth({
       maxUsernameLength: 20,
       immutableUsername: true,
       usernameValidator: (value: string) => validateUsername(value).ok,
+    }),
+    // 管理后台：user.role 判权 + user.banned 在「创建会话」时拦截（封禁即无法登录）
+    // 注意：后台的封禁/授权走 routes/admin.ts 里的直连 DB 实现，插件只负责登录拦截与字段定义
+    admin({
+      defaultRole: "user",
+      adminRoles: ["admin"],
+      bannedUserMessage: "账号已被停用，如有疑问请联系管理员",
     }),
   ],
   advanced: {

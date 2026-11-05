@@ -1,0 +1,637 @@
+/* 管理后台样式：复用 apps/web 的 tokens.css 色板，桌面优先布局
+   设计基调沿用 PRD §10：薄荷绿主色、24px 圆角、柔和绿调阴影 */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg-page);
+  color: var(--t1);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--green-600);
+  text-decoration: none;
+}
+
+/* ---------------------------- 登录页 ---------------------------- */
+.login-wrap {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(circle at 20% 10%, var(--green-50), var(--bg-page) 60%);
+}
+
+html[data-theme="dark"] .login-wrap {
+  background: radial-gradient(circle at 20% 10%, var(--green-50), var(--bg-page) 60%);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: 32px 28px;
+  box-shadow: var(--shadow-lg);
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.login-logo {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: var(--fab-gradient);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 800;
+  font-size: 18px;
+}
+
+.login-title {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.login-sub {
+  color: var(--t3);
+  font-size: 12.5px;
+  margin-bottom: 22px;
+}
+
+/* ---------------------------- 布局 ---------------------------- */
+.shell {
+  display: grid;
+  grid-template-columns: 208px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: var(--bg-card);
+  border-right: 1px solid var(--border);
+  padding: 18px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.side-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 8px 16px;
+}
+
+.side-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: var(--fab-gradient);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 800;
+  font-size: 15px;
+  flex: none;
+}
+
+.side-brand-t {
+  font-weight: 800;
+  font-size: 14.5px;
+  line-height: 1.2;
+}
+
+.side-brand-s {
+  font-size: 11px;
+  color: var(--t3);
+  letter-spacing: 0.04em;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  color: var(--t2);
+  font-weight: 600;
+  font-size: 13.5px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+
+.nav-item:hover {
+  background: var(--bg-sunken);
+  color: var(--t1);
+}
+
+.nav-item.on {
+  background: var(--green-50);
+  color: var(--green-700);
+}
+
+html[data-theme="dark"] .nav-item.on {
+  background: var(--green-100);
+  color: var(--green-700);
+}
+
+.nav-ic {
+  font-size: 15px;
+  width: 18px;
+  text-align: center;
+  opacity: 0.85;
+}
+
+.side-foot {
+  margin-top: auto;
+  padding: 12px 8px 0;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--t3);
+}
+
+.main {
+  padding: 20px 26px 48px;
+  min-width: 0;
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+}
+
+.page-title {
+  font-size: 21px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.page-desc {
+  color: var(--t3);
+  font-size: 12.5px;
+  margin-top: 2px;
+}
+
+/* ---------------------------- 卡片 / 统计 ---------------------------- */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px 18px;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stat {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px 16px;
+}
+
+.stat-k {
+  font-size: 12px;
+  color: var(--t3);
+  margin-bottom: 6px;
+}
+
+.stat-v {
+  font-size: 24px;
+  font-weight: 800;
+  font-family: var(--font-num);
+  letter-spacing: -0.02em;
+}
+
+.stat-v.small {
+  font-size: 19px;
+}
+
+.stat-sub {
+  font-size: 11.5px;
+  color: var(--t3);
+  margin-top: 2px;
+}
+
+/* ---------------------------- 表格 ---------------------------- */
+.table-wrap {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+thead th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--t3);
+  background: var(--bg-sunken);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+
+tbody td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr:hover {
+  background: var(--green-50);
+}
+
+html[data-theme="dark"] tbody tr:hover {
+  background: var(--green-100);
+}
+
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  padding: 36px 16px;
+  text-align: center;
+  color: var(--t3);
+  font-size: 13px;
+}
+
+/* ---------------------------- 控件 ---------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card);
+  color: var(--t1);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--t-fast);
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--bg-sunken);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn.primary {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--on-primary);
+}
+
+.btn.primary:hover:not(:disabled) {
+  filter: brightness(0.95);
+  background: var(--primary);
+}
+
+.btn.danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: var(--budget-over-bg);
+}
+
+.btn.sm {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+
+.btn.ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--green-600);
+  padding: 4px 8px;
+}
+
+.input,
+.select {
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-card);
+  color: var(--t1);
+  outline: none;
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+  font-size: 13px;
+}
+
+.input:focus,
+.select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--green-100);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.filters .spacer {
+  flex: 1;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.chip.ok {
+  background: var(--green-100);
+  color: var(--green-700);
+}
+
+.chip.warn {
+  background: var(--budget-warn-bg);
+  color: #8a5a00;
+}
+
+.chip.over {
+  background: var(--budget-over-bg);
+  color: var(--budget-over);
+}
+
+.chip.mute {
+  background: var(--bg-sunken);
+  color: var(--t3);
+}
+
+html[data-theme="dark"] .chip.warn {
+  color: var(--budget-warn);
+}
+
+/* ---------------------------- 分页 / 加载 ---------------------------- */
+.more {
+  display: flex;
+  justify-content: center;
+  padding: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.loading {
+  padding: 30px;
+  text-align: center;
+  color: var(--t3);
+  font-size: 13px;
+}
+
+.error-box {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--budget-over-bg);
+  color: var(--budget-over);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+/* ---------------------------- 抽屉 ---------------------------- */
+.drawer-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 26, 21, 0.4);
+  backdrop-filter: blur(2px);
+  z-index: 40;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.drawer {
+  width: min(560px, 94vw);
+  background: var(--bg-page);
+  height: 100%;
+  overflow-y: auto;
+  padding: 20px 22px 40px;
+  animation: slide-in var(--t-sheet) var(--ease-spring);
+}
+
+@keyframes slide-in {
+  from {
+    transform: translateX(28px);
+    opacity: 0.6;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.drawer-title {
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 108px 1fr;
+  gap: 8px 12px;
+  font-size: 13px;
+}
+
+.kv dt {
+  color: var(--t3);
+}
+
+.kv dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--t2);
+  margin: 20px 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+pre.json {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  max-height: 320px;
+  margin: 0;
+}
+
+/* ---------------------------- 图表 ---------------------------- */
+.chart-row {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 1080px) {
+  .chart-row {
+    grid-template-columns: 1fr;
+  }
+  .shell {
+    grid-template-columns: 176px 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .side-foot {
+    display: none;
+  }
+  .main {
+    padding: 16px 14px 40px;
+  }
+}
+
+/* 确认对话框 */
+.confirm-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 26, 21, 0.45);
+  display: grid;
+  place-items: center;
+  z-index: 60;
+  padding: 20px;
+}
+
+.confirm-card {
+  width: min(400px, 100%);
+  background: var(--bg-card);
+  border-radius: var(--r-card);
+  padding: 22px;
+  box-shadow: var(--shadow-lg);
+}
+
+.confirm-title {
+  font-weight: 800;
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+.confirm-body {
+  color: var(--t2);
+  font-size: 13px;
+  margin-bottom: 18px;
+  line-height: 1.7;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+textarea.input {
+  resize: vertical;
+  min-height: 68px;
+  width: 100%;
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  background: var(--t1);
+  color: var(--bg-card);
+  padding: 9px 18px;
+  border-radius: var(--r-pill);
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 80;
+  box-shadow: var(--shadow-lg);
+}

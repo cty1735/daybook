@@ -75,6 +75,29 @@ const mkT = (id, amount, updatedAt, extra = {}) => ({
 const health = await call("/api/health");
 check("健康检查", health.status === 200 && health.json?.ok === true, JSON.stringify(health.json));
 
+// 0.1) 在线接口文档
+const openapi = await call("/api/openapi.json");
+const docPaths = Object.keys(openapi.json?.paths ?? {});
+// 14 个账号/同步接口 + 18 个后台接口
+check(
+  "OpenAPI 规范可访问且覆盖全部接口",
+  openapi.status === 200 &&
+    docPaths.length === 32 &&
+    docPaths.includes("/api/sync/push") &&
+    docPaths.includes("/api/auth/register") &&
+    docPaths.includes("/api/admin/users/{id}/ban") &&
+    docPaths.includes("/api/admin/stats/categories"),
+  `status=${openapi.status} paths=${docPaths.length}`,
+);
+const docsPage = await call("/api/docs");
+check("在线文档页重定向到 /api/docs/", docsPage.status === 302 || docsPage.status === 200, `status=${docsPage.status}`);
+const docsHtml = await call("/api/docs/");
+check(
+  "在线文档页返回 HTML 且指向 openapi.json",
+  docsHtml.status === 200 && (docsHtml.text ?? "").includes("/api/openapi.json"),
+  `status=${docsHtml.status}`,
+);
+
 // 1) 未登录访问同步接口应 401
 const anon = await call("/api/sync/pull?cursor=0");
 check("未登录 pull 返回 401", anon.status === 401, `status=${anon.status}`);

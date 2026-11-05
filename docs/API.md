@@ -3,6 +3,11 @@
 > 对应代码：`apps/api`（Hono 4 + Drizzle + SQLite/libSQL + better-auth）
 > 最近更新：2026-11-04 · 版本 `1.0.0`
 
+## 在线阅读
+
+后端启动后打开 **<http://127.0.0.1:3001/api/docs>**（Swagger UI，可直接 Try it out 调试）。数据源是 `apps/api/src/docs/openapi.ts` 里的 OpenAPI 3.0 规范，原始 JSON 在 `/api/openapi.json`，可直接导入 Postman / Insomnia / Apifox。
+本 Markdown 是同一份内容的离线版（含 PowerShell 脚本与排错清单）。
+
 ## 目录
 
 - [1. 快速了解](#1-快速了解)
@@ -14,6 +19,7 @@
 - [7. 数据模型](#7-数据模型)
 - [8. 错误码总表](#8-错误码总表)
 - [9. 调试与排错](#9-调试与排错)
+- [10. 管理后台接口（/api/admin/*）](#10-管理后台接口apiadmin)
 
 ---
 
@@ -709,3 +715,129 @@ Invoke-RestMethod -Uri "$base/api/sync/pull?cursor=0&limit=10" -WebSession $sess
 | POST | `/api/auth/recovery-code` | ✅ | 重新生成恢复码 |
 | POST | `/api/sync/push` | ✅ | 推送变更 |
 | GET | `/api/sync/pull` | ✅ | 按游标拉取 |
+
+---
+
+## 10. 管理后台接口（`/api/admin/*`）
+
+> 代码：`apps/api/src/routes/admin.ts`；鉴权中间件：`apps/api/src/lib/admin-guard.ts`；前端：`apps/admin`（同域 `/admin/`）。
+
+### 10.1 前提与约定
+
+- 全部需要**已登录会话**且 `user.role` 含 `admin`，`user.banned` 为 `false`。
+  - 未登录 → `401 { code:"UNAUTHORIZED" }`
+  - 已登录非管理员 → `403 { code:"FORBIDDEN" }`
+  - 被封禁 → `403 { code:"BANNED_USER" }`
+  - 配了 `ADMIN_IP_ALLOWLIST` 且 IP 不在白名单 → `403 { code:"IP_FORBIDDEN" }`
+- 列表统一游标分页：`{ data: [...], nextCursor: string | null }`；`nextCursor` 为 `null` 表示到底。
+- **邮箱脱敏**：`ab***@x.com`；内部占位邮箱（`*@daybook.local`）返回 `null`。
+- **敏感字段红线**：响应里永远不会出现 `account.password`、`user_recovery.code_hash`、`session.token`、`password_reset.token_hash`。
+- **写操作必留痕**：封禁、解封、授权、强制下线、流水软删、流水恢复都会写 `admin_audit_log`。
+
+### 10.2 身份与概览
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/whoami` | 当前管理员身份（前端守卫用） |
+| GET | `/api/admin/overview` | 用户数 / 管理员数 / 封禁数 / 流水数 / 今日新增 / 7 日活跃会话 / 设备数 / 近 7 日趋势 |
+
+`overview` 响应示例：
+
+```json
+{
+  "data": {
+    "users": 27, "admins": 2, "banned": 1,
+    "transactions": 69, "liveTransactions": 62,
+    "todayTransactions": 25, "activeSessions7d": 25, "devices": 7,
+    "trend": [{ "day": "2026-11-04", "count": 25 }]
+  }
+}
+```
+
+### 10.3 用户管理
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/users` | 列表。参数：`q`（用户名/显示名/邮箱模糊搜，不区分大小写）、`role=admin\|user`、`banned=0\|1`、`sort=created\|lastLogin`、`cursor`、`limit`(≤100) |
+| GET | `/api/admin/users/:id` | 详情：资料、会话、同步设备、流水统计、`user_state` 体积、最近 10 条流水 |
+| POST | `/api/admin/users/:id/ban` | 封禁。body `{ reason?, expiresIn? }`（`expiresIn` 单位秒）。**同时删除该用户全部会话** |
+| POST | `/api/admin/users/:id/unban` | 解封（清 `banned` / `banReason` / `banExpires`，`status` 回 `active`） |
+| POST | `/api/admin/users/:id/role` | body `{ role: "admin" \| "user" }`；不能撤销自己的管理员权限 |
+| POST | `/api/admin/users/:id/revoke-sessions` | 强制下线（删除全部会话，本机数据不动） |
+
+封禁为什么能拦住登录：better-auth 的 `admin` 插件在**创建会话**时检查 `user.banned`，命中即抛 `BANNED_USER`；已登录设备则靠删除 `session` 立即失效。
+
+### 10.4 流水审计
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/transactions` | 参数：`userId`、`from`/`to`（毫秒或 ISO 字符串）、`type`、`minAmount`/`maxAmount`（**分**）、`categoryId`、`includeDeleted=1`、`cursor`、`limit`(≤200) |
+| GET | `/api/admin/transactions/:id` | 详情，含原始 `payload`；建议带 `?userId=` 一起定位 |
+| POST | `/api/admin/transactions/:id/delete` | 软删：写墓碑 + **重新分配 `seq`** |
+| POST | `/api/admin/transactions/:id/restore` | 恢复：清墓碑 + 重新分配 `seq` |
+
+> **为什么必须重新分配 `seq`**：客户端按 `seq > cursor` 拉增量。直接 `UPDATE deleted_at` 不改变 `seq`，其他设备永远拉不到这次变更。
+> 重复删除返回 `400 ALREADY_DELETED`，重复恢复返回 `400 NOT_DELETED`，`payload` 损坏返回 `500 BAD_PAYLOAD`。
+
+### 10.5 统计
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/stats/totals` | `?from=&to=` → 支出/收入/转账/调整的金额与笔数（只算未删除；转账与调整不计收支） |
+| GET | `/api/admin/stats/categories` | `?from=&to=&limit=` → 支出分类 Top，按**分类名合并**（不同用户各有自己的分类 UUID），返回 `amount` / `count` / `share` |
+| GET | `/api/admin/stats/daily` | `?from=&to=`（默认最近 30 天）→ 每日 `expense` / `income` / `count` |
+
+统计全部基于 `ledger_transactions` 的**物化列** `amount` / `tx_type` / `category_id`：
+
+```sql
+-- 迁移 0002 里已回填历史数据
+UPDATE ledger_transactions
+SET amount = coalesce(json_extract(payload,'$.amount'), 0),
+    tx_type = coalesce(json_extract(payload,'$.type'), 'expense'),
+    category_id = json_extract(payload,'$.categoryId');
+```
+
+### 10.6 设备 / 审计 / 系统
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/devices` | 同步设备列表（按最后同步倒序，附用户名） |
+| GET | `/api/admin/audit` | 操作日志。参数：`action`、`adminId`、`from`/`to`、`cursor`、`limit` |
+| GET | `/api/admin/system` | 版本、环境、运行时长、各表行数、最近一次后台操作时间 |
+
+审计 `action` 取值：`user.ban` / `user.unban` / `user.role` / `user.revoke-sessions` / `tx.soft-delete` / `tx.restore`。
+
+### 10.7 进后台的最小步骤
+
+管理员账号已直接写入本地数据库（凭据不在文档里记录）。需要新建/提权时：
+
+```powershell
+pnpm dev                                   # api + web + admin 一起起
+pnpm admin:create                          # 幂等：不存在则建默认管理员并提权
+pnpm admin:create -- myadmin MyPass12345   # 指定用户名与密码
+# 浏览器打开 http://localhost:5173/admin/ ，用该账号登录（前台是 http://localhost:5173/）
+```
+
+开发期**只从 5173 进入**：`/admin/*` 由 web 的 dev server 反向代理到 admin 的 5174，两个应用同源，
+Cookie 与 `WEB_ORIGINS` 都按 5173 一套口径，不需要为后台单独配置。
+
+也可以启动时批量提权：`$env:ADMIN_USERNAMES="你的用户名"; pnpm dev`，或直接改库
+`update user set role='admin' where username='xxx';`。
+
+### 10.8 PowerShell 调试
+
+```powershell
+# 先登录拿 Cookie（会话共享，admin 接口复用同一个 Cookie）
+$s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+Invoke-RestMethod -Uri http://127.0.0.1:3001/api/auth/login -Method Post -WebSession $s `
+  -ContentType application/json -Headers @{ Origin = "http://localhost:5173" } `
+  -Body '{"username":"demo_admin","password":"Demo2026Pass"}'
+
+# 概览
+Invoke-RestMethod -Uri http://127.0.0.1:3001/api/admin/overview -WebSession $s
+
+# 封禁（写操作会记审计日志）
+Invoke-RestMethod -Uri http://127.0.0.1:3001/api/admin/users/<userId>/ban -Method Post -WebSession $s `
+  -ContentType application/json -Headers @{ Origin = "http://localhost:5173" } `
+  -Body '{"reason":"测试封禁"}'
+```

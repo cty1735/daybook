@@ -34,6 +34,15 @@ export interface PushInput {
   state?: { payload: UserState; updatedAt: number };
 }
 
+/** payload 的物化列，供后台按金额/类型/分类做 SQL 聚合 */
+export function materialize(t: Transaction): { amount: number; txType: string; categoryId: string | null } {
+  return {
+    amount: Number.isFinite(t.amount) ? Math.trunc(t.amount) : 0,
+    txType: typeof t.type === "string" ? t.type : "expense",
+    categoryId: t.categoryId ?? null,
+  };
+}
+
 export async function pushChanges(input: PushInput): Promise<SyncPushResult> {
   const serverNow = Date.now();
   const { userId, deviceId, transactions, state } = input;
@@ -80,6 +89,7 @@ export async function pushChanges(input: PushInput): Promise<SyncPushResult> {
         let seq = await nextSeq(userId, tx as unknown as typeof db);
         for (const t of toWrite) {
           const payload = JSON.stringify(t);
+          const cols = materialize(t);
           const target = tx as unknown as typeof db;
           const rows = await target
             .select({ id: ledgerTransactions.id })
@@ -95,6 +105,7 @@ export async function pushChanges(input: PushInput): Promise<SyncPushResult> {
                 updatedAt: t.updatedAt,
                 deletedAt: t.deletedAt,
                 occurredAt: t.occurredAt,
+                ...cols,
               })
               .where(and(eq(ledgerTransactions.userId, userId), eq(ledgerTransactions.id, t.id)));
           } else {
@@ -106,6 +117,7 @@ export async function pushChanges(input: PushInput): Promise<SyncPushResult> {
               updatedAt: t.updatedAt,
               deletedAt: t.deletedAt,
               occurredAt: t.occurredAt,
+              ...cols,
             });
           }
           seq++;

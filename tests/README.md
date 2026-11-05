@@ -5,9 +5,12 @@
 | 脚本 | 覆盖 | 需要先启动 |
 |---|---|---|
 | `pnpm test` | 共享领域层单元测试（LWW、金额、CSV 往返、Zod） | 无 |
-| `pnpm test:api` | 后端同步协议 + 账号体系端到端（注册 / 登录 / 锁定 / 改密 / 恢复码 / push / pull / LWW / 墓碑 / 分页） | `pnpm dev:api` |
+| `pnpm test:api` | 后端同步协议 + 账号体系端到端（注册 / 登录 / 锁定 / 改密 / 恢复码 / push / pull / LWW / 墓碑 / 分页 / 文档接口数） | `pnpm dev:api` |
 | `pnpm test:e2e` | 浏览器端到端（IndexedDB 持久化 / 迁移 / 注册→同步→退出闭环） | `pnpm dev`（api + web） |
+| `pnpm test:admin` | 管理后台接口端到端（401/403、封禁登录拦截、解封、强制下线、物化列筛选、软删/恢复的 seq、审计留痕、统计、授权） | `pnpm dev:api` |
+| `pnpm test:admin:e2e` | 管理后台浏览器端到端（登录 → 概览 → 用户 → 流水 → 统计 → 日志 → 系统 → 退出，含截图） | `pnpm dev:api` + `pnpm dev:admin` |
 | `pnpm db:inspect` | 从 SQLite 文件侧核对落库情况 | 无 |
+| `node tests/admin-inspect.mjs` | 核对物化列（amount/type/category）回填与审计表 | 无 |
 
 ## 一键跑完整验证
 

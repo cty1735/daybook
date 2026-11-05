@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>日账 DayBook · 后端 API</title>
+    <link rel="icon" type="image/png" href="/api/docs/favicon-32x32.png" />
+    <link rel="stylesheet" href="/api/docs/swagger-ui.css" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #fafafa;
+      }
+      /* 顶栏配色跟 DayBook 的暖色系对齐 */
+      .swagger-ui .topbar {
+        background-color: #2f2a26;
+      }
+      .swagger-ui .topbar .download-url-wrapper .select-label {
+        color: #f2ece6;
+      }
+      .swagger-ui .info .title small.version-stamp {
+        background-color: #c2703d;
+      }
+      .swagger-ui .btn.authorize {
+        color: #b4552b;
+        border-color: #b4552b;
+      }
+      .swagger-ui .btn.authorize svg,
+      .swagger-ui .btn.authorize .lock,
+      .swagger-ui .btn.authorize svg path {
+        fill: #b4552b;
+        stroke: #b4552b;
+      }
+      .swagger-ui .opblock.opblock-post {
+        border-color: #5c8a5c;
+        background: rgba(92, 138, 92, 0.08);
+      }
+      .swagger-ui .opblock.opblock-post .opblock-summary-method {
+        background: #5c8a5c;
+      }
+      #loading {
+        font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: #6b635c;
+        padding: 48px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loading">正在加载接口文档…</div>
+    <div id="swagger-ui"></div>
+
+    <!-- 全部自托管（离线可用），来自 swagger-ui-dist@5.34.1 -->
+    <script src="/api/docs/swagger-ui-bundle.js"></script>
+    <script src="/api/docs/swagger-ui-standalone-preset.js"></script>
+    <script>
+      window.ui = SwaggerUIBundle({
+        // 数据源：后端手写的 OpenAPI 3.0 规范（src/docs/openapi.ts）
+        url: "/api/openapi.json",
+        dom_id: "#swagger-ui",
+        deepLinking: true,
+        // 账号体系是 HttpOnly Cookie，必须带凭证才能「Try it out」
+        withCredentials: true,
+        persistAuthorization: true,
+        docExpansion: "list",
+        defaultModelsExpandDepth: 1,
+        defaultModelExpandDepth: 2,
+        displayRequestDuration: true,
+        displayOperationId: false,
+        tryItOutEnabled: true,
+        filter: true,
+        presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+        plugins: [SwaggerUIBundle.plugins.DownloadUrl],
+        layout: "StandaloneLayout",
+        onComplete: function () {
+          var el = document.getElementById("loading");
+          if (el) el.remove();
+        },
+      });
+
+      // 轻量汉化：只替换完全匹配的界面文案，不动 DOM 结构
+      (function () {
+        var DICT = {
+          "Try it out": "试一下",
+          Cancel: "取消",
+          Execute: "发送",
+          Clear: "清空",
+          Authorize: "授权",
+          "Available authorizations": "可用的授权",
+          Close: "关闭",
+          Logout: "退出授权",
+          Parameters: "参数",
+          "Request body": "请求体",
+          Responses: "响应",
+          Response: "响应",
+          "Example Value": "示例值",
+          Schema: "结构",
+          "Media type": "媒体类型",
+          "Links": "关联",
+          "No parameters": "无参数",
+          "No links": "无关联",
+          "Filter by tag or path": "按标签或路径筛选",
+          Schemas: "数据模型",
+          Models: "数据模型",
+          "Undocumented": "未记录",
+          "Download": "下载",
+          Servers: "服务器",
+          "Server": "服务器",
+          "Request URL": "请求地址",
+          "Code": "状态码",
+          "Details": "详情",
+          "Description": "说明",
+          "Name": "名称",
+        };
+        function walk(root) {
+          var it = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+          var node;
+          while ((node = it.nextNode())) {
+            var t = node.nodeValue.trim();
+            if (DICT[t]) node.nodeValue = node.nodeValue.replace(t, DICT[t]);
+          }
+        }
+        var started = false;
+        function fixAttrs(root) {
+          var inputs = (root || document).querySelectorAll('input[placeholder="Filter by tag or path"]');
+          for (var i = 0; i < inputs.length; i++) inputs[i].placeholder = "按标签或路径筛选";
+        }
+        function start() {
+          if (started) return;
+          started = true;
+          walk(document.body);
+          fixAttrs(document);
+          var mo = new MutationObserver(function (muts) {
+            for (var i = 0; i < muts.length; i++) {
+              for (var j = 0; j < muts[i].addedNodes.length; j++) {
+                var n = muts[i].addedNodes[j];
+                if (n.nodeType === 1) {
+                  walk(n);
+                  fixAttrs(n);
+                }
+              }
+            }
+          });
+          mo.observe(document.body, { childList: true, subtree: true });
+        }
+        var timer = setInterval(function () {
+          if (document.querySelector(".swagger-ui .info")) {
+            clearInterval(timer);
+            start();
+          }
+        }, 200);
+        setTimeout(function () {
+          clearInterval(timer);
+          start();
+        }, 5000);
+      })();
+    </script>
+  </body>
+</html>

@@ -14,6 +14,7 @@
 |---|---|---|
 | 前端 | Vite 8 + React 19 + TypeScript + Zustand + Dexie | 移动端优先，桌面自动套手机框 |
 | 后端 | Node 22 + Hono 4 + Drizzle + SQLite(libSQL) + better-auth | 可选，单进程 ~100MB RSS |
+| 管理后台 | Vite 8 + React 19 + TypeScript（与前端同栈） | 同域 `/admin/`，仅管理员可进，只管用户 / 流水 / 统计 |
 | 共享层 | `packages/shared` | 类型 / Zod / 金额 / 日期 / 统计 / CSV / 同步协议，只写一份 |
 
 设计规范严格照 PRD §10「薄荷绿 · 轻盈可爱」执行（色板、圆角、间距、阴影、字体、深色模式全部落进 `apps/web/src/styles/tokens.css`）。
@@ -38,16 +39,24 @@ daybook/                       ← monorepo 根（pnpm workspaces）
 │  │     ├─ lib/select.ts      图标/符号映射等展示层
 │  │     ├─ styles/            tokens / base / components
 │  │     └─ icons/Icon.tsx     ~60 个自绘线性 SVG 图标
-│  └─ api/                     后端
-│     ├─ src/auth.ts           better-auth（用户名 + 密码）
+│  ├─ api/                     后端
+│     ├─ src/auth.ts           better-auth（用户名 + 密码 + admin 插件）
 │     ├─ src/routes/account.ts 注册 / 登录 / 改密 / 设备 / 找回
+│     ├─ src/routes/admin.ts   /api/admin/*：用户 / 流水审计 / 统计 / 审计日志
+│     ├─ src/lib/admin-guard.ts  requireAdmin + 邮箱脱敏 + 审计写入
 │     ├─ src/db/               schema / 连接 / 迁移 / 重置
 │     ├─ src/lib/sync-service.ts  push / pull 的服务端实现
 │     ├─ src/routes/           sync 路由 + [[docs/API.md]] 对应实现
 │     └─ drizzle/              由 drizzle-kit 生成的迁移 SQL
+│  └─ admin/                   管理后台（同域 /admin/，开发期经 5173 代理）
+│     └─ src/
+│        ├─ screens/           概览 / 用户 / 流水审计 / 统计 / 操作日志 / 系统
+│        ├─ components/        表格反馈、确认框、纯 SVG 图表
+│        └─ lib/               api 客户端、hash 路由、格式化
 ├─ packages/shared/            前后端共享领域层
 ├─ docs/API.md                 后端接口文档（请求/响应示例、错误码、调试脚本）
-└─ tests/                      单元 + 后端端到端 + 浏览器端到端
+├─ docs/ADMIN-PLAN.md          管理后台技术方案（选型、接口设计、迁移、风险）
+└─ tests/                      单元 + 后端端到端 + 浏览器端到端（含后台）
 ```
 
 ---
@@ -60,6 +69,7 @@ pnpm dev            # 同时起 api(3001) 与 web(5173)
 ```
 
 打开 <http://localhost:5173>。
+后端起来后，接口文档在 <http://127.0.0.1:3001/api/docs>（Swagger UI，可在线调试），OpenAPI 原始规范在 `/api/openapi.json`。
 
 - 首次启动会预置一份示例数据（十几条，具体条数见 `packages/shared/src/seed.ts`），方便直接看报表效果；可在「我的 → 数据」一键清空。
 - 想试账号与同步：「我的」顶部「未登录」→ 注册（用户名 + 密码）→ 记住恢复码 → 回到「云同步」点「立即同步」。
@@ -77,16 +87,20 @@ pnpm dev:web        # 不登录的话，前端完全自洽，同步页只会提�
 
 | 命令 | 作用 |
 |---|---|
-| `pnpm dev` | 并行启动 api + web |
-| `pnpm dev:web` / `pnpm dev:api` | 只启动其中一个 |
-| `pnpm build` | 前端生产构建 + 后端类型检查 |
-| `pnpm typecheck` | 三个包全量类型检查 |
+| `pnpm dev` | 并行启动 api(3001) + web(5173) + admin(5174)；统一从 `http://localhost:5173` 访问 |
+| `pnpm dev:web` / `pnpm dev:api` / `pnpm dev:admin` | 只启动其中一个 |
+| `pnpm dev:all` | `pnpm dev` 的别名（保留旧习惯） |
+| `pnpm build` | web + admin 生产构建 + 后端类型检查 |
+| `pnpm typecheck` | 四个包全量类型检查 |
 | `pnpm lint` | oxlint（仅警告，无 error） |
 | `pnpm test` | 共享层单元测试（12 条） |
-| `pnpm test:api` | 后端协议端到端（33 条） |
+| `pnpm test:api` | 后端协议端到端（36 条） |
 | `pnpm test:e2e` | 浏览器端到端（28 条，自动拉起/清理无头 Chrome） |
+| `pnpm test:admin` | 后台接口端到端（54 条，需先 `pnpm dev:api`） |
+| `pnpm test:admin:e2e` | 后台浏览器端到端（20 条，需先 `pnpm dev`；后台走 5173 的 `/admin/`） |
 | `pnpm db:generate` / `db:migrate` / `db:reset` | Drizzle 迁移生成 / 应用 / 重置本地库 |
 | `pnpm db:inspect` | 直接从 SQLite 文件侧核对落库情况 |
+| `pnpm admin:create` | 幂等创建/提升管理员（凭据见脚本输出） |
 
 ---
 
@@ -177,7 +191,53 @@ GET  /api/sync/pull    ?cursor=&limit=                               → { curso
 | POST | `/api/auth/forgot-password` `/reset-password` | 邮箱令牌或恢复码重置（撤销全部会话） |
 | POST | `/api/auth/recovery-code` | 用当前密码重新生成恢复码 |
 
-> 完整的请求/响应示例、错误码表、同步协议细节和 PowerShell 调试脚本见 **[`docs/API.md`](./docs/API.md)**。
+> 完整的请求/响应示例、错误码表、同步协议细节和 PowerShell 调试脚本见 **[`docs/API.md`](./docs/API.md)**；
+> 后端启动后也可以直接打开在线文档 **<http://127.0.0.1:3001/api/docs>**（Swagger UI，可 Try it out 调试，数据源是 `apps/api/src/docs/openapi.ts` 的 OpenAPI 3.0 规范）。
+
+---
+
+## 管理后台（`apps/admin`，同域 `/admin/`）
+
+面向运营的三个模块：**用户管理**、**流水审计**、**统计分析**（外加概览、操作日志、系统信息）。
+
+- **独立 app，不进用户包**：`apps/admin` 单独构建到 `dist/`，生产放在同域的 `/admin/` 静态目录。
+- **开发期只有一个入口**：`pnpm dev` 同时起 api(3001) + web(5173) + admin(5174)，但**只访问 `http://localhost:5173`**；`/` 是 App、`/admin/` 是后台，`/admin/*` 由 web 的 dev server 反向代理到 5174。这样两个应用共享同一个 origin，Cookie 天然可用，也不会出现「开过一次后台后刷新前台变成后台」的串台。
+- **鉴权复用 better-auth**：启用官方 `admin` 插件（`user.role` / `banned` / `banReason` / `banExpires`），后台接口统一走 `requireAdmin`（未登录 401、非管理员 403、可选 IP 白名单）。
+- **封禁立刻生效**：除写 `banned=true` 外，同时删除该用户全部 `session`，插件在创建会话时会拦下已封禁账号。
+- **邮箱脱敏**：列表/详情只返回 `ab***@x.com`；内部占位邮箱（`*@daybook.local`）返回 `null`。
+- **流水审计只读 + 软删/恢复**：绝不替用户创建/修改分类账户（会与本地 IndexedDB 真相源冲突）。软删/恢复都会**重新分配 `seq`**，否则设备按 `seq > cursor` 拉不到变更。
+- **物化列**：`ledger_transactions` 新增 `amount` / `tx_type` / `category_id`（`payload` 的投影），后台按金额区间、类型、分类聚合全部走索引；写入集中在 `sync-service.pushChanges()` 一处，历史数据由迁移里的 `json_extract` 一次性回填。
+- **审计日志**：`admin_audit_log` 只增不改不删；封禁/解封/授权/强制下线/软删/恢复六类操作全部留痕（操作人、目标、变更摘要、IP、UA）。
+- **统计口径**：只算未删除流水；`transfer` / `adjustment` 不计收支；分类统计按**分类名**合并（每个用户有自己一套分类 UUID，运营要看「房租」合计而不是 N 条房租）。
+
+### 怎么进后台
+
+管理员账号已直接写入本地数据库（不在文档里记录凭据）。需要新建或重置时用建号脚本：
+
+```powershell
+pnpm dev                                   # api + web + admin 一起起（单一入口 5173）
+pnpm admin:create                          # 幂等：不存在则建默认管理员并提权
+pnpm admin:create -- myadmin MyPass12345   # 指定用户名与密码
+# 打开 http://localhost:5173/admin/ ，用该账号登录（前台是 http://localhost:5173/）
+```
+
+其它提权方式：
+
+```powershell
+$env:ADMIN_USERNAMES="你的用户名"; pnpm dev   # 启动时自动提权（只提权不降权）
+```
+
+> 也可以直接改库：`update user set role='admin' where username='xxx';`
+
+- 后台登录复用 `/api/auth/login`，因此 **5 次失败锁 15 分钟 + 单 IP 20 次/小时** 自动生效。
+- 授权后可在后台页面互相授予/撤销管理员（不能撤销自己）。
+
+### 后台接口
+
+`GET /api/admin/{whoami,overview,users,users/:id,transactions,transactions/:id,stats/totals,stats/categories,stats/daily,devices,audit,system}`
+`POST /api/admin/users/:id/{ban,unban,role,revoke-sessions}`、`POST /api/admin/transactions/:id/{delete,restore}`
+
+完整参数与响应见 [`docs/API.md`](./docs/API.md) 与在线文档的「后台」分组。
 
 ---
 
@@ -202,9 +262,11 @@ GET  /api/sync/pull    ?cursor=&limit=                               → { curso
 | `DATABASE_URL` | `file:./data/daybook.sqlite` | SQLite 文件 |
 | `BETTER_AUTH_SECRET` | 开发占位值 | **生产必须改** |
 | `BETTER_AUTH_URL` | `http://127.0.0.1:3001` | 后端对外基址 |
-| `WEB_ORIGINS` | localhost/127.0.0.1 的 5173、4173 | CORS 与 trustedOrigins 白名单 |
+| `WEB_ORIGINS` | localhost/127.0.0.1 的 5173、4173、5174 | CORS 与 trustedOrigins 白名单（5174 仅用于直连后台 dev server 调试） |
 | `EXPOSE_DEV_AUTH` | 非生产为 `1` | **生产必须 `0`**（旧名 `EXPOSE_DEV_OTP` 兼容） |
 | `MAX_PUSH_BATCH` | `2000` | 单次 push 上限 |
+| `ADMIN_USERNAMES` | 空 | 启动时置为 admin 的用户名（逗号分隔，只提权不降权） |
+| `ADMIN_IP_ALLOWLIST` | 空 | 后台接口 IP 白名单（逗号分隔），空=不限制 |
 
 ---
 
