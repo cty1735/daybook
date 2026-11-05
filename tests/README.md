@@ -5,8 +5,8 @@
 | 脚本 | 覆盖 | 需要先启动 |
 |---|---|---|
 | `pnpm test` | 共享领域层单元测试（LWW、金额、CSV 往返、Zod） | 无 |
-| `pnpm test:api` | 后端端到端（注册 / 登录 / 锁定 / 改密 / 恢复码 / 实时读写 `/api/data` / 旧同步协议 / LWW / 墓碑 / 分页 / 文档接口数） | `pnpm dev:api` |
-| `pnpm test:e2e` | 浏览器端到端（登录门禁 / 注册 → 实时写库 → 刷新 / 退出 / 重新登录恢复） | `pnpm dev`（api + web） |
+| `pnpm test:api` | 后端同步协议 + 账号体系端到端（注册 / 登录 / 锁定 / 改密 / 恢复码 / push / pull / LWW / 墓碑 / 分页 / 文档接口数） | `pnpm dev:api` |
+| `pnpm test:e2e` | 浏览器端到端（IndexedDB 持久化 / 迁移 / 注册→同步→退出闭环） | `pnpm dev`（api + web） |
 | `pnpm test:admin` | 管理后台接口端到端（401/403、封禁登录拦截、解封、强制下线、物化列筛选、软删/恢复的 seq、审计留痕、统计、授权） | `pnpm dev:api` |
 | `pnpm test:admin:e2e` | 管理后台浏览器端到端（登录 → 概览 → 用户 → 流水 → 统计 → 日志 → 系统 → 退出，含截图） | `pnpm dev:api` + `pnpm dev:admin` |
 | `pnpm db:inspect` | 从 SQLite 文件侧核对落库情况 | 无 |
@@ -22,7 +22,7 @@ pnpm dev
 pnpm test        # 单元
 pnpm test:api    # 后端协议
 pnpm test:e2e    # 浏览器（会自动拉起无头 Chrome，结束时清理进程与临时 profile）
-pnpm db:inspect  # 看云端到底存了什么
+pnpm db:inspect  # 看服务端到底存了什么
 ```
 
 ## 说明
@@ -33,5 +33,5 @@ pnpm db:inspect  # 看云端到底存了什么
 - 账号测试用随机用户名 + 随机 `X-Forwarded-For`，避免「同一 IP 每小时 20 次登录」限流影响反复调试。
 - 开发模式下找回密码的重置令牌会随 `/api/auth/forgot-password` 响应返回（`EXPOSE_DEV_AUTH=1`），
   测试与本地调试因此不需要 SMTP；生产环境必须 `EXPOSE_DEV_AUTH=0`。
-- 浏览器端测试复用真实交互路径（点 FAB、按金额键盘、注册表单、登录表单），
+- 浏览器端测试复用真实交互路径（点 FAB、按金额键盘、注册表单、点「立即同步」），
   不是直接调 store，所以能捕捉到真实的渲染/事件问题。
