@@ -15,8 +15,8 @@
 - [3. 系统接口](#3-系统接口)
 - [4. 账号接口](#4-账号接口)
 - [实时数据接口（/api/data，前端主路径）](#实时数据接口api数据前端主路径)
-- [5. 同步接口](#5-同步接口)
-- [6. 同步协议细节](#6-同步协议细节)
+- [5. 旧同步接口（已弃用）](#5-旧同步接口已弃用)
+- [6. 旧同步协议细节](#6-旧同步协议细节)
 - [7. 数据模型](#7-数据模型)
 - [8. 错误码总表](#8-错误码总表)
 - [9. 调试与排错](#9-调试与排错)
@@ -34,14 +34,14 @@
 | 鉴权方式 | **HttpOnly Cookie 会话**（better-auth 管理），不传 Bearer Token |
 | 时间单位 | **epoch 毫秒**（number） |
 | 金额单位 | **整数「分」**（number，`12.34 元` → `1234`） |
-| 自定义请求头 | `X-Device-Id`（可选，同步时记录设备） |
+| 自定义请求头 | `X-Device-Id`（可选，仅旧同步接口记录设备） |
 
 后端只有两类职责：
 
 1. **账号**：注册 / 登录 / 登出 / 改密 / 设备管理 / 找回密码。
-2. **数据**：账本以服务端为准，前端实时读写 `/api/data`；旧同步端点 `push/pull` 保留兼容。
+2. **数据**：账本以云端为准，前端实时读写 `/api/data`；旧同步端点 `push/pull` 保留兼容。
 
-> 服务端**不做**记账业务计算：账目以 JSON payload 原样存储，谁更新更晚谁赢（LWW）。
+> 云端**不做**记账业务计算：账目以 JSON payload 原样存储，谁更新更晚谁赢（LWW）。
 
 ---
 
@@ -95,7 +95,7 @@ IP 取值顺序：`X-Forwarded-For` → `X-Real-IP` → `CF-Connecting-IP` → `
 
 - 有效期 **30 天**，滑动续期（`updateAge` 1 天）。
 - `GET /api/auth/session` 是判断登录态的唯一入口（`user: null` 即未登录）。
-- 登出只销毁会话，**本机账目数据不受影响**。
+- 登出只销毁会话，**账本数据不受影响**。
 
 ---
 
@@ -103,7 +103,7 @@ IP 取值顺序：`X-Forwarded-For` → `X-Real-IP` → `CF-Connecting-IP` → `
 
 ### GET /api/health
 
-健康检查，无需登录。前端「云同步」页用它在顶部显示后端连通性。
+健康检查，无需登录。部署脚本 `deploy.sh` 用它做发布后的存活校验（`GET /api/health` 200 才算部署成功）。
 
 **响应 200**
 
@@ -173,7 +173,7 @@ IP 取值顺序：`X-Forwarded-For` → `X-Real-IP` → `CF-Connecting-IP` → `
 ```
 
 - 同时通过 `Set-Cookie` 建立会话（注册即登录）。
-- **`recoveryCode` 只出现这一次**，服务端只存 SHA-256。丢了只能用邮箱找回或登录后重新生成。
+- **`recoveryCode` 只出现这一次**，云端只存 SHA-256。丢了只能用邮箱找回或登录后重新生成。
 - 响应里可能带 better-auth 的 `token` 字段，客户端请忽略，鉴权一律靠 Cookie。
 
 **错误**
@@ -402,13 +402,13 @@ IP 取值顺序：`X-Forwarded-For` → `X-Real-IP` → `CF-Connecting-IP` → `
 
 ## 实时数据接口（`/api/data`，前端主路径）
 
-> 代码：`apps/api/src/routes/data.ts`。前端不再使用 IndexedDB：启动即 `GET /api/data` 拉全量，增删改实时回写；必须登录。
+> 代码：`apps/api/src/routes/data.ts`。前端启动即 `GET /api/data` 拉全量，增删改实时回写；必须登录，浏览器不保存账本。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/data` | 返回完整 `AppData`（流水 + 分类/账户/预算/偏好）。新用户首次访问自动写入默认分类与账户。 |
 | POST | `/api/data/transactions` | `{ transactions: Transaction[] }`，幂等 upsert（含墓碑），返回 `{ accepted, rejected }`。 |
-| PUT | `/api/data/state` | `UserState` 整包覆盖；服务端保证时间戳单调递增，不会被旧的「未来时间」挡住。 |
+| PUT | `/api/data/state` | `UserState` 整包覆盖；云端保证时间戳单调递增，不会被旧的「未来时间」挡住。 |
 | DELETE | `/api/data/transactions` | 物理删除当前用户全部流水。 |
 | POST | `/api/data/reset` | 恢复出厂：删流水 + 重建默认状态，返回新的 `AppData`。 |
 | POST | `/api/data/replace` | 用 `AppData` 备份整体替换，返回替换后的 `AppData`。 |
@@ -417,8 +417,10 @@ IP 取值顺序：`X-Forwarded-For` → `X-Real-IP` → `CF-Connecting-IP` → `
 
 ---
 
-## 5. 同步接口
+## 5. 旧同步接口（已弃用）
 
+> 前端已改为实时读写 `/api/data`，**下面这套 push / pull 前端不再调用**，仅为旧客户端与调试保留。
+>
 > 实现见 `apps/api/src/routes/sync.ts` + `src/lib/sync-service.ts`。
 > **都需要登录**，未登录返回 `401 { "message": "未登录" }`（无 `code` 字段）。
 
@@ -457,8 +459,8 @@ IP 取值顺序：`X-Forwarded-For` → `X-Real-IP` → `CF-Connecting-IP` → `
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `deviceId` | ✅ | 设备标识，1–64 字符，服务端记录活跃时间与推拉次数 |
-| `cursor` | ❌ | 保留字段，服务端当前**不使用**（客户端记录进度用） |
+| `deviceId` | ✅ | 设备标识，1–64 字符，云端记录活跃时间与推拉次数 |
+| `cursor` | ❌ | 保留字段，云端当前**不使用**（客户端记录进度用） |
 | `transactions` | ❌ | 账目变更数组，默认 `[]`，单次上限 `MAX_PUSH_BATCH`（默认 2000） |
 | `state` | ❌ | 用户级状态整包（分类/账户/预算/设置），LWW 覆盖 |
 
@@ -471,9 +473,9 @@ IP 取值顺序：`X-Forwarded-For` → `X-Real-IP` → `CF-Connecting-IP` → `
 | 字段 | 说明 |
 |---|---|
 | `accepted` | 本次被接受写入的流水条数（LWW 胜出） |
-| `rejected` | 因本地版本落后被丢弃的条数 |
+| `rejected` | 因版本落后被丢弃的条数 |
 | `cursor` | 推送后该用户可见的最大 seq，可作为下次 pull 的起点 |
-| `serverTime` | 服务端当前时间（用于校正设备时钟） |
+| `serverTime` | 云端当前时间（用于校正设备时钟） |
 | `stateAccepted` | 用户级状态是否被接受 |
 
 **错误**
@@ -511,18 +513,18 @@ IP 取值顺序：`X-Forwarded-For` → `X-Real-IP` → `CF-Connecting-IP` → `
 ```
 
 - `hasMore: true` 表示还有下一页，客户端用返回的 `cursor` 继续拉，直到 `false`。
-- `state` 为 `{ "payload": {...}, "updatedAt": 1793779300000 }` 或 `null`（`limitState=0` 或服务端无状态）。
-- 删除的记录以**墓碑**返回（`deletedAt` 非 null），客户端据此删除本地数据。
+- `state` 为 `{ "payload": {...}, "updatedAt": 1793779300000 }` 或 `null`（`limitState=0` 或云端无状态）。
+- 删除的记录以**墓碑**返回（`deletedAt` 非 null），客户端据此丢弃该记录。
 
 ---
 
-## 6. 同步协议细节
+## 6. 旧同步协议细节
 
-理解这 4 条就能解释所有同步行为：
+理解这 4 条就能解释所有旧同步行为（新客户端不需要了解，实时接口直接读写整本账）：
 
 ### 6.1 `seq` 是「每用户逻辑序号」，不是主键
 
-- 每个用户有自己的 seq 序列（1、2、3…），由服务端在**每次被接受的写入**时重新分配，包括**就地更新**。
+- 每个用户有自己的 seq 序列（1、2、3…），由云端在**每次被接受的写入**时重新分配，包括**就地更新**。
 - 所以同一 `id` 的记录改一次就会拿到更大的 seq，其他设备用 `seq > cursor` 才能拉到这次修改。
 - 客户端游标只存这个数字，别用时间戳（用户可能改系统时间）。
 
@@ -532,31 +534,33 @@ IP 取值顺序：`X-Forwarded-For` → `X-Real-IP` → `CF-Connecting-IP` → `
 2. `updatedAt` 完全相等时：若一方 `deletedAt` 非空（墓碑），墓碑方胜 —— 防止已删记录被旧设备「复活」。
 3. 完全相等且都不是墓碑 → 视为相同，丢弃入站变更。
 
-### 6.3 服务端会夹取客户端时间
+### 6.3 云端会夹取客户端时间
 
 `updatedAt` 在落库前被夹到 `[0, serverNow + 60s]`：
 
-- 客户端时间为 0/负数/非法 → 用服务端当前时间。
+- 客户端时间为 0/负数/非法 → 用云端当前时间。
 - 客户端时间超前 60 秒以上 → 截断为 `serverNow + 60s`。
 - 目的：一台设备把时间改到 2099 年，不能永久压制其他设备。
 
-### 6.4 首次同步必须全量上传
+### 6.4 首次同步必须全量上传（仅旧客户端）
 
 客户端满足 `lastSyncedAt === null && cursor === 0` 时视为首次同步：
-要把**本机全部记录 + 用户状态**一次性 push，而不是只推 outbox 里的增量。
-因为预置数据、旧版本 localStorage 迁移进来的数据都不在 outbox 里，否则永远上不了云。
+要把**全部记录 + 用户状态**一次性 push，而不是只推增量。
+因为预置数据、旧版本迁移进来的数据都不在增量集合里，否则永远上不了云。
 
-### 6.5 推荐客户端流程
+> 实时接口 `/api/data` 不存在这个问题：每次 GET 就是整本账，写入直接落云端。
+
+### 6.5 推荐客户端流程（仅旧客户端）
 
 ```
 1. GET  /api/auth/session           → 未登录则跳过同步
 2. POST /api/sync/push              → 先推（首次则全量）
 3. GET  /api/sync/pull?cursor=...   → 循环直到 hasMore=false
-4. 本地按 LWW 归并（前端用 @daybook/shared 的 mergeTransactions）
+4. 按 LWW 归并（@daybook/shared 的 mergeTransactions）
 5. 记住返回的 cursor 与 serverTime
 ```
 
-先推后拉是为了让服务端先拿到本机较新的版本，减少被覆盖的条数。
+先推后拉是为了让云端先拿到客户端较新的版本，减少被覆盖的条数。
 
 ---
 
@@ -598,7 +602,7 @@ IP 取值顺序：`X-Forwarded-For` → `X-Real-IP` → `CF-Connecting-IP` → `
 账户类型：`cash` | `debit` | `credit` | `huabei` | `wallet` | `other`。
 完整 Zod 定义在 `packages/shared/src/schemas.ts`。
 
-### 服务端表
+### 云端表
 
 | 表 | 用途 |
 |---|---|
@@ -693,11 +697,11 @@ Invoke-RestMethod -Uri "$base/api/sync/pull?cursor=0&limit=10" -WebSession $sess
 | 浏览器报 CORS 错误 | 前端来源不在 `WEB_ORIGINS` | 改 `.env` 的 `WEB_ORIGINS` 并重启 |
 | 401 一直不消失 | Cookie 没带 | 前端 `credentials: 'include'`；手测用 `-WebSession` |
 | 登录总是 429 | 触发了用户名锁定/IP 限流 | 等 15 分钟，或换 `X-Forwarded-For`（仅本地调试） |
-| 同步后别的设备看不到 | 客户端游标用了时间戳，或服务端 seq 未重新分配 | 游标必须是 `/pull` 返回的 `cursor` |
+| 同步后别的设备看不到 | 客户端游标用了时间戳，或云端 seq 未重新分配 | 游标必须是 `/pull` 返回的 `cursor` |
 | 改了记录另一台没更新 | 服务器判定旧版本 | 检查 `updatedAt` 是否随修改递增 |
 | 已删的记录又出现 | 客户端未实现「同分墓碑胜」 | 用 `@daybook/shared` 的 `resolveLWW` / `mergeTransactions` |
 | 启动报 `table xxx already exists` | 手改过迁移文件但 `_journal.json` 的 `when` 未同步 | 把 `when` 改成库中 `__drizzle_migrations.created_at` |
-| 想看服务端到底存了什么 | — | `pnpm db:inspect`，或 `pnpm db:studio` 起 Drizzle Studio |
+| 想看云端到底存了什么 | — | `pnpm db:inspect`，或 `pnpm db:studio` 起 Drizzle Studio |
 
 ### 9.3 环境变量（影响接口行为的部分）
 
@@ -797,7 +801,7 @@ Invoke-RestMethod -Uri "$base/api/sync/pull?cursor=0&limit=10" -WebSession $sess
 }
 ```
 
-> 后台所有数字都直接读服务端的 `ledger_transactions` / `user_state`——也就是前台 `/api/data` 写入的同一份数据。
+> 后台所有数字都直接读云端的 `ledger_transactions` / `user_state`——也就是前台 `/api/data` 写入的同一份数据。
 > 前台一改动，后台刷新（概览页默认 15 秒自动刷新）即可看到，不再存在「前台记了账、后台还是 0」的两套库。
 
 ### 10.4 用户管理（前台用户）
@@ -808,7 +812,7 @@ Invoke-RestMethod -Uri "$base/api/sync/pull?cursor=0&limit=10" -WebSession $sess
 | GET | `/api/admin/users/:id` | 详情：资料、会话、同步设备、流水统计、`user_state` 体积、**账本结构 `ledger`（分类 / 账户 / 预算 / 偏好）**、最近 10 条流水（含分类名 / 账户名 / 备注） |
 | POST | `/api/admin/users/:id/ban` | 封禁。body `{ reason?, expiresIn? }`（`expiresIn` 单位秒）。**同时删除该用户全部会话** |
 | POST | `/api/admin/users/:id/unban` | 解封（清 `banned` / `banReason` / `banExpires`，`status` 回 `active`） |
-| POST | `/api/admin/users/:id/revoke-sessions` | 强制下线（删除全部会话，本机数据不动） |
+| POST | `/api/admin/users/:id/revoke-sessions` | 强制下线（删除全部会话，账本数据不动） |
 
 > 账本结构来自该用户的 `user_state.payload`，与前台的分类管理 / 账户管理 / 预算设置完全同源；后台只读展示，不替用户改账本。
 

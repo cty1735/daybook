@@ -22,7 +22,7 @@ pnpm dev
 pnpm test        # 单元
 pnpm test:api    # 后端协议
 pnpm test:e2e    # 浏览器（会自动拉起无头 Chrome，结束时清理进程与临时 profile）
-pnpm db:inspect  # 看服务端到底存了什么
+pnpm db:inspect  # 看云端到底存了什么
 ```
 
 ## 说明
@@ -33,5 +33,5 @@ pnpm db:inspect  # 看服务端到底存了什么
 - 账号测试用随机用户名 + 随机 `X-Forwarded-For`，避免「同一 IP 每小时 20 次登录」限流影响反复调试。
 - 开发模式下找回密码的重置令牌会随 `/api/auth/forgot-password` 响应返回（`EXPOSE_DEV_AUTH=1`），
   测试与本地调试因此不需要 SMTP；生产环境必须 `EXPOSE_DEV_AUTH=0`。
-- 浏览器端测试复用真实交互路径（点 FAB、按金额键盘、注册表单、点「立即同步」），
+- 浏览器端测试复用真实交互路径（点 FAB、按金额键盘、注册表单、登录表单），
   不是直接调 store，所以能捕捉到真实的渲染/事件问题。

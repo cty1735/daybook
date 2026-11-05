@@ -119,7 +119,7 @@ export const adminAuditLog = sqliteTable("admin_audit_log", {
 
 **返回统一格式**：`{ data, nextCursor? }`；错误沿用现有 `{ message, code }`（前端 `ApiError` 可直接复用）。
 
-**不做的事（明确划界）**：不提供"替用户改分类/建账户"这类写业务数据的接口（多端同步 + 本地 IndexedDB 会成为真相源冲突），后台对业务数据**只读 + 软删/恢复**。
+**不做的事（明确划界）**：不提供"替用户改分类/建账户"这类写业务数据的接口（后台写入会与前台实时接口的真相源冲突），后台对业务数据**只读 + 软删/恢复**。
 
 ---
 
@@ -155,7 +155,7 @@ export async function requireAdmin(c: Context) {
 
 ### 5.4 模拟登录（impersonate）
 
-插件自带，但**第一期不做**。它会在 `session.impersonated_by` 留痕，但对本地优先 App 来说"以用户身份写数据"风险太高，等有真实客服需求再开。
+插件自带，但**第一期不做**。它会在 `session.impersonated_by` 留痕，但对必须登录的云端账本来说"以用户身份写数据"风险太高，等有真实客服需求再开。
 
 ---
 
@@ -176,9 +176,9 @@ apps/admin/
    └─ styles/{tokens.css,admin.css}   # tokens.css 直接从 web 复制，保证同色系
 ```
 
-- **不复用** `apps/web` 的 Dexie / Zustand store：后台是纯服务端数据，不需要本地库。
+- **不复用** `apps/web` 的 Zustand store：后台是纯云端数据，不需要本地状态。
 - 桌面优先布局（左侧 200px 侧栏 + 内容区），但仍做 1280/1024 两档自适应。
-- 表格交互：列头排序 → 服务端 `sort`；筛选变化 → 重置游标；「更多」按钮加载下一页（游标分页，避免 COUNT 全表）。
+- 表格交互：列头排序 → 云端 `sort`；筛选变化 → 重置游标；「更多」按钮加载下一页（游标分页，避免 COUNT 全表）。
 - 时间一律显示 `Asia/Shanghai` + 相对时间（`3 分钟前`），前端不做时区换算猜测。
 
 ---

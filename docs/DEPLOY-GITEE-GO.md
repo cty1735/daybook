@@ -85,7 +85,7 @@ bash deploy.sh
 两个安装期踩到的坑（已在 unit 里规避）：
 
 1. **必须设 `Environment=HOME=/root`** —— 否则 Agent 启动即 `panic: $HOME is not defined`。
-2. **`ExecStart` 必须带 `-f`（强制注册）** —— 否则重启后注册会被服务端拒：`400 Agent has been deleted or duplicated`。
+2. **`ExecStart` 必须带 `-f`（强制注册）** —— 否则重启后注册会被云端拒：`400 Agent has been deleted or duplicated`。
 3. 并发数用 `-c 2`（默认 10），1.8GB 内存下最多同时跑 2 个构建。
 
 排查用：`journalctl -u gitee-go-agent -f`，或把 unit 里的 `-l info` 临时改成 `-l debug` 看任务轮询。
