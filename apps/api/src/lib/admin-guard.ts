@@ -1,15 +1,15 @@
 /* 管理后台鉴权与审计
-   - requireAdmin：会话 + role 校验（多角色用逗号分隔），可选 IP 白名单
+   - requireAdmin：**后台独立会话**（admin_user / admin_session）校验，可选 IP 白名单
    - writeAudit：写操作留痕，只插不改不删
    - maskEmail：列表页邮箱脱敏（PRD 后台约定）
    - isSyntheticEmail：未绑定邮箱的内部占位邮箱不外露 */
 
 import type { Context } from "hono";
-import { auth } from "../auth.ts";
 import { db } from "../db/client.ts";
 import { adminAuditLog } from "../db/schema.ts";
 import { env } from "../env.ts";
 import { getClientIp, isSyntheticEmail } from "./account-service.ts";
+import { readAdminSession } from "./admin-auth.ts";
 import { uid } from "@daybook/shared";
 
 export interface AdminUser {
@@ -30,29 +30,17 @@ export async function requireAdmin(c: Context): Promise<GuardResult> {
     }
   }
 
-  const s = await auth.api.getSession({ headers: c.req.raw.headers });
-  if (!s?.user) {
+  const s = await readAdminSession(c.req.raw.headers);
+  if (!s) {
     return { response: c.json({ message: "未登录", code: "UNAUTHORIZED" }, 401) };
-  }
-
-  const u = s.user as Record<string, unknown>;
-  const roles = String(u.role ?? "user")
-    .split(",")
-    .map((r) => r.trim())
-    .filter(Boolean);
-  if (!roles.includes("admin")) {
-    return { response: c.json({ message: "无后台权限", code: "FORBIDDEN" }, 403) };
-  }
-  if (u.banned === true) {
-    return { response: c.json({ message: "账号已被停用", code: "BANNED_USER" }, 403) };
   }
 
   return {
     user: {
-      id: String(u.id),
-      username: String(u.username ?? ""),
-      displayUsername: String(u.displayUsername ?? u.name ?? ""),
-      role: roles.join(","),
+      id: s.admin.id,
+      username: s.admin.username,
+      displayUsername: s.admin.name || s.admin.username,
+      role: "admin",
     },
   };
 }

@@ -13,6 +13,7 @@ import { bootstrapAdmins } from "./lib/admin-bootstrap.ts";
 import { openapiDocument } from "./docs/openapi.ts";
 import { assertProdConfig, env } from "./env.ts";
 import { accountRoutes } from "./routes/account.ts";
+import { adminAuthRoutes } from "./routes/admin-auth.ts";
 import { adminRoutes } from "./routes/admin.ts";
 import { syncRoutes } from "./routes/sync.ts";
 
@@ -61,7 +62,9 @@ app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
 app.route("/api/sync", syncRoutes);
 
-// 管理后台（/api/admin/*）：会话 + role=admin 校验在每条路由内做
+// 管理后台（/api/admin/*）：独立后台会话校验在每条路由内做
+// 注意：/api/admin/auth/* 必须先挂载，它自身负责登录/会话/管理员账号管理
+app.route("/api/admin/auth", adminAuthRoutes);
 app.route("/api/admin", adminRoutes);
 
 app.notFound((c) => c.json({ message: "接口不存在" }, 404));

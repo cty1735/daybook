@@ -51,15 +51,8 @@ export const env = {
   maxPushBatch: Number(process.env.MAX_PUSH_BATCH ?? 2000),
 
   /**
-   * 启动时置为 admin 的用户名（逗号分隔，小写）。
-   * 只在启动时执行一次，之后用后台页面互相授权，不做「注册即管理员」。
+   * 可选：后台接口 IP 白名单（逗号分隔）；为空则不限制
    */
-  adminUsernames: (process.env.ADMIN_USERNAMES ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean),
-
-  /** 可选：后台接口 IP 白名单（逗号分隔）；为空则不限制 */
   adminIpAllowlist: (process.env.ADMIN_IP_ALLOWLIST ?? "")
     .split(",")
     .map((s) => s.trim())

@@ -48,6 +48,19 @@ export interface AdminMe {
   role: string;
 }
 
+export interface AdminAccount {
+  id: string;
+  username: string;
+  displayUsername: string;
+  name: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  lastLoginAt: number | null;
+  lastLoginIp: string | null;
+  isSelf?: boolean;
+}
+
 export interface Overview {
   users: number;
   admins: number;
@@ -161,22 +174,47 @@ export interface Paged<T> {
 /* ------------------------------ 接口 ------------------------------ */
 
 export const api = {
-  /** 当前会话；未登录或非管理员返回 null（后台只关心能不能进） */
+  /** 当前后台会话；未登录返回 null（后台只关心能不能进） */
   async me(): Promise<AdminMe | null> {
     try {
-      const r = await request<{ data: AdminMe }>("/api/admin/whoami");
+      const r = await request<{ data: AdminMe }>("/api/admin/auth/me");
       return r.data;
     } catch {
       return null;
     }
   },
 
+  /** 后台独立登录：与前台 App 账号完全分离 */
   async login(input: { username: string; password: string }): Promise<void> {
-    await request("/api/auth/login", { method: "POST", json: { ...input, rememberMe: true } });
+    await request("/api/admin/auth/login", { method: "POST", json: { ...input, rememberMe: true } });
   },
 
   async logout(): Promise<void> {
-    await request("/api/auth/logout", { method: "POST", json: {} });
+    await request("/api/admin/auth/logout", { method: "POST", json: {} });
+  },
+
+  changeMyPassword(input: { currentPassword: string; newPassword: string }): Promise<{ data: { ok: boolean } }> {
+    return request("/api/admin/auth/me/password", { method: "POST", json: input });
+  },
+
+  adminAccounts(): Promise<{ data: AdminAccount[] }> {
+    return request("/api/admin/auth/accounts");
+  },
+
+  createAdminAccount(input: { username: string; password: string; name?: string }): Promise<{ data: AdminAccount }> {
+    return request("/api/admin/auth/accounts", { method: "POST", json: input });
+  },
+
+  resetAdminPassword(id: string, password: string): Promise<{ data: { ok: boolean; self: boolean } }> {
+    return request(`/api/admin/auth/accounts/${encodeURIComponent(id)}/password`, { method: "POST", json: { password } });
+  },
+
+  setAdminStatus(id: string, status: "active" | "disabled"): Promise<{ data: { ok: boolean; status: string } }> {
+    return request(`/api/admin/auth/accounts/${encodeURIComponent(id)}/status`, { method: "POST", json: { status } });
+  },
+
+  deleteAdminAccount(id: string): Promise<{ data: { ok: boolean } }> {
+    return request(`/api/admin/auth/accounts/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
   overview(): Promise<{ data: Overview }> {
@@ -201,10 +239,6 @@ export const api = {
 
   unbanUser(id: string): Promise<{ data: { ok: boolean } }> {
     return request(`/api/admin/users/${encodeURIComponent(id)}/unban`, { method: "POST", json: {} });
-  },
-
-  setRole(id: string, role: "admin" | "user"): Promise<{ data: { ok: boolean; role: string } }> {
-    return request(`/api/admin/users/${encodeURIComponent(id)}/role`, { method: "POST", json: { role } });
   },
 
   revokeSessions(id: string): Promise<{ data: { ok: boolean } }> {

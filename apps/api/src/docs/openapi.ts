@@ -71,9 +71,10 @@ const EXAMPLE_STATE = {
 
 /* ------------------------- 管理后台路径 -------------------------
    统一约定：
-   - 全部需要 Cookie 会话且 user.role 含 admin，否则 401 / 403
+   - 鉴权走**后台独立会话**（Cookie `daybook_admin_session` + admin_user 表），
+     与前台 user 账号完全分离；未登录 401，无权限 403
    - 列表接口用游标分页，返回 { data, nextCursor }
-   - 写操作（封禁/解封/授权/强制下线/软删/恢复）都会写 admin_audit_log */
+   - 写操作（封禁/解封/强制下线/软删/恢复/管理员增删改）都会写 admin_audit_log */
 const adminOk = (description: string, example?: unknown) =>
   okJson(description, { type: "object", properties: { data: { type: "object" } } }, example);
 
@@ -89,8 +90,8 @@ const adminPaths = {
     get: {
       tags: adminTag,
       operationId: "adminWhoami",
-      summary: "当前管理员身份",
-      description: "前端守卫用；非管理员返回 403。",
+      summary: "当前管理员身份（兼容保留）",
+      description: "等价于 `GET /api/admin/auth/me`；未登录返回 401。",
       security: [{ cookieAuth: [] }],
       responses: {
         200: adminOk("管理员身份", { data: { id: "u_x", username: "demo_admin", displayUsername: "Demo_Admin", role: "admin" } }),
@@ -119,7 +120,7 @@ const adminPaths = {
       operationId: "adminListUsers",
       summary: "用户列表",
       description:
-        "支持 `q`（用户名/显示名/邮箱模糊搜）、`role`（admin/user）、`banned`（0/1）、`sort`（created/lastLogin）、`cursor`、`limit`。\n\n邮箱按 `ab***@x.com` 脱敏；内部占位邮箱（`*@daybook.local`）返回 null。",
+        "支持 `q`（用户名/显示名/邮箱模糊搜）、`role`（历史字段，前台用户现固定为 user）、`banned`（0/1）、`sort`（created/lastLogin）、`cursor`、`limit`。\n\n这里是**前台用户**；后台管理员请用 `/api/admin/auth/accounts`。\n\n邮箱按 `ab***@x.com` 脱敏；内部占位邮箱（`*@daybook.local`）返回 null。",
       security: [{ cookieAuth: [] }],
       parameters: [
         { name: "q", in: "query", schema: { type: "string" } },
@@ -191,22 +192,155 @@ const adminPaths = {
       },
     },
   },
-  "/api/admin/users/{id}/role": {
+  "/api/admin/auth/login": {
     post: {
       tags: adminTag,
-      operationId: "adminSetRole",
-      summary: "授予 / 撤销管理员",
-      description: "只能设为 `admin` 或 `user`；不能撤销自己的管理员权限。",
+      operationId: "adminLogin",
+      summary: "后台登录（独立账号体系）",
+      description:
+        "使用 **admin_user** 表中的后台账号登录，与前台 `/api/auth/login` 完全独立。\n\n成功后写入 HttpOnly Cookie `daybook_admin_session`。连续 5 次密码错误锁定 15 分钟；同 IP 每小时最多 20 次尝试。",
+      security: [],
+      requestBody: jsonBody(
+        {
+          type: "object",
+          properties: { username: { type: "string" }, password: { type: "string" }, rememberMe: { type: "boolean", default: true } },
+          required: ["username", "password"],
+        },
+        { username: "admin", password: "********", rememberMe: true },
+      ),
+      responses: {
+        200: adminOk("登录成功", { data: { id: "adm_x", username: "admin", displayUsername: "admin", status: "active" } }),
+        400: adminFail("缺少用户名或密码（MISSING_FIELDS）"),
+        401: adminFail("用户名或密码不正确 / 账号已停用（INVALID_CREDENTIALS）"),
+        429: adminFail("尝试次数过多（RATE_LIMITED）"),
+      },
+    },
+  },
+  "/api/admin/auth/logout": {
+    post: {
+      tags: adminTag,
+      operationId: "adminLogout",
+      summary: "后台登出",
+      description: "销毁当前后台会话并清除 Cookie。",
+      security: [{ cookieAuth: [] }],
+      responses: { 200: adminOk("已登出", { data: { ok: true } }) },
+    },
+  },
+  "/api/admin/auth/me": {
+    get: {
+      tags: adminTag,
+      operationId: "adminMe",
+      summary: "当前后台管理员",
+      description: "未登录返回 401。前端用它判断是否需要显示登录页。",
+      security: [{ cookieAuth: [] }],
+      responses: {
+        200: adminOk("管理员身份", { data: { id: "adm_x", username: "admin", displayUsername: "admin", role: "admin" } }),
+        401: adminFail("未登录（UNAUTHORIZED）"),
+      },
+    },
+  },
+  "/api/admin/auth/me/password": {
+    post: {
+      tags: adminTag,
+      operationId: "adminChangeOwnPassword",
+      summary: "修改自己的密码",
+      description: "校验当前密码后更新；成功后**吊销该管理员全部后台会话**并重新签发当前会话。",
+      security: [{ cookieAuth: [] }],
+      requestBody: jsonBody(
+        {
+          type: "object",
+          properties: { currentPassword: { type: "string" }, newPassword: { type: "string" } },
+          required: ["currentPassword", "newPassword"],
+        },
+        { currentPassword: "********", newPassword: "newpass123" },
+      ),
+      responses: {
+        200: adminOk("已修改", { data: { ok: true } }),
+        400: adminFail("当前密码不正确（INVALID_CREDENTIALS）/ 新密码过弱（WEAK_PASSWORD）"),
+      },
+    },
+  },
+  "/api/admin/auth/accounts": {
+    get: {
+      tags: adminTag,
+      operationId: "adminListAccounts",
+      summary: "管理员账号列表",
+      description: "只返回后台管理员，不包含前台用户。",
+      security: [{ cookieAuth: [] }],
+      responses: { 200: adminOk("管理员列表", { data: [{ id: "adm_x", username: "admin", status: "active", isSelf: true }] }) },
+    },
+    post: {
+      tags: adminTag,
+      operationId: "adminCreateAccount",
+      summary: "新建管理员账号",
+      description: "后台账号独立创建；用户名 3–20 位字母/数字/`_`/`-`，密码至少 8 位且含字母和数字。",
+      security: [{ cookieAuth: [] }],
+      requestBody: jsonBody(
+        {
+          type: "object",
+          properties: { username: { type: "string" }, password: { type: "string" }, name: { type: "string", maxLength: 40 } },
+          required: ["username", "password"],
+        },
+        { username: "ops", password: "ops12345", name: "运营" },
+      ),
+      responses: {
+        200: adminOk("已创建"),
+        400: adminFail("用户名或密码不合法（INVALID_USERNAME / WEAK_PASSWORD）"),
+        409: adminFail("用户名已存在（USERNAME_TAKEN）"),
+      },
+    },
+  },
+  "/api/admin/auth/accounts/{id}/password": {
+    post: {
+      tags: adminTag,
+      operationId: "adminResetAccountPassword",
+      summary: "重置某管理员密码",
+      description: "重置后该管理员全部后台会话立即失效。",
       security: [{ cookieAuth: [] }],
       parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
       requestBody: jsonBody(
-        { type: "object", properties: { role: { type: "string", enum: ["admin", "user"] } }, required: ["role"] },
-        { role: "admin" },
+        { type: "object", properties: { password: { type: "string" } }, required: ["password"] },
+        { password: "newpass123" },
       ),
       responses: {
-        200: adminOk("已变更", { data: { ok: true, role: "admin" } }),
-        400: adminFail("非法角色（INVALID_ROLE）/ 不能撤销自己（SELF_TARGET）"),
-        404: adminFail("用户不存在"),
+        200: adminOk("已重置", { data: { ok: true, self: false } }),
+        400: adminFail("密码过弱（WEAK_PASSWORD）"),
+        404: adminFail("管理员不存在（NOT_FOUND）"),
+      },
+    },
+  },
+  "/api/admin/auth/accounts/{id}/status": {
+    post: {
+      tags: adminTag,
+      operationId: "adminSetAccountStatus",
+      summary: "停用 / 启用管理员",
+      description: "不能停用自己；停用会立即吊销该账号全部会话；至少要保留一个可用管理员。",
+      security: [{ cookieAuth: [] }],
+      parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+      requestBody: jsonBody(
+        { type: "object", properties: { status: { type: "string", enum: ["active", "disabled"] } }, required: ["status"] },
+        { status: "disabled" },
+      ),
+      responses: {
+        200: adminOk("已更新", { data: { ok: true, status: "disabled" } }),
+        400: adminFail("非法状态（INVALID_STATUS）"),
+        404: adminFail("管理员不存在"),
+        409: adminFail("不能停用自己（CANNOT_SELF_DISABLE）/ 至少要保留一个可用管理员（LAST_ADMIN）"),
+      },
+    },
+  },
+  "/api/admin/auth/accounts/{id}": {
+    delete: {
+      tags: adminTag,
+      operationId: "adminDeleteAccount",
+      summary: "删除管理员",
+      description: "不能删除自己；至少要保留一个可用管理员；删除会立即吊销其全部会话。",
+      security: [{ cookieAuth: [] }],
+      parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+      responses: {
+        200: adminOk("已删除", { data: { ok: true } }),
+        404: adminFail("管理员不存在"),
+        409: adminFail("不能删除自己（CANNOT_SELF_DELETE）/ 至少要保留一个可用管理员（LAST_ADMIN）"),
       },
     },
   },
@@ -425,11 +559,11 @@ export const openapiDocument = {
   info: {
     title: "日账 DayBook · 后端 API",
     version: "1.0.0",
-    summary: "本地优先记账应用的账号与增量同步服务",
+    summary: "服务端为准的记账应用：账号 + 实时读写 + 增量同步",
     description: [
       "## 这是什么",
-      "DayBook 后端只做两件事：**账号体系**（注册/登录/登出/改密/找回/设备管理）与 **增量同步**（push/pull）。",
-      "账目数据默认存在浏览器 IndexedDB 里，服务端只保存原样 JSON payload 与同步游标，不做业务计算。",
+      "DayBook 后端做三件事：**账号体系**（注册/登录/登出/改密/找回/设备管理）、**实时读写**（`/api/data`，前端主路径）与 **增量同步**（push/pull，保留兼容）。",
+      "账本以服务端 SQLite 为准；前端启动时拉全量，增删改实时回写，服务端保存完整 JSON payload 与单调 `seq`，不做业务计算。",
       "",
       "## 约定",
       "- 鉴权：**HttpOnly Cookie 会话**（`better-auth.session_token`），不传 Bearer Token。",
@@ -990,6 +1124,32 @@ export const openapiDocument = {
           lastUsedAccountId: { type: "string", nullable: true },
         },
       },
+      AppData: {
+        type: "object",
+        description: "完整账本：流水 + 用户级状态。",
+        required: [
+          "schemaVersion",
+          "transactions",
+          "categories",
+          "accounts",
+          "budget",
+          "settings",
+          "categoryUsage",
+          "lastUsedCategoryId",
+          "lastUsedAccountId",
+        ],
+        properties: {
+          schemaVersion: { type: "integer" },
+          transactions: { type: "array", items: transactionRef },
+          categories: { type: "array", items: { $ref: "#/components/schemas/Category" } },
+          accounts: { type: "array", items: { $ref: "#/components/schemas/Account" } },
+          budget: { $ref: "#/components/schemas/Budget" },
+          settings: { $ref: "#/components/schemas/Settings" },
+          categoryUsage: { type: "object", additionalProperties: { type: "integer" } },
+          lastUsedCategoryId: { type: "string", nullable: true },
+          lastUsedAccountId: { type: "string", nullable: true },
+        },
+      },
       SyncPushRequest: {
         type: "object",
         required: ["deviceId"],
@@ -1047,6 +1207,22 @@ export const openapiDocument = {
           lastLoginAt: { type: "integer", nullable: true },
         },
       },
+      AdminAccount: {
+        type: "object",
+        required: ["id", "username", "displayUsername", "status", "createdAt"],
+        properties: {
+          id: { type: "string", description: "后台管理员 ID（adm_…）" },
+          username: { type: "string" },
+          displayUsername: { type: "string" },
+          name: { type: "string" },
+          status: { type: "string", enum: ["active", "disabled"] },
+          createdAt: { type: "integer", description: "epoch 毫秒" },
+          updatedAt: { type: "integer" },
+          lastLoginAt: { type: "integer", nullable: true },
+          lastLoginIp: { type: "string", nullable: true },
+          isSelf: { type: "boolean", description: "是否当前登录的管理员" },
+        },
+      },
       AdminTransaction: {
         type: "object",
         required: ["id", "userId", "username", "amount", "type", "occurredAt", "deleted", "seq"],
@@ -1083,9 +1259,21 @@ export const openapiDocument = {
           adminName: { type: "string" },
           action: {
             type: "string",
-            enum: ["user.ban", "user.unban", "user.role", "user.revoke-sessions", "tx.soft-delete", "tx.restore"],
+            enum: [
+              "user.ban",
+              "user.unban",
+              "user.revoke-sessions",
+              "tx.soft-delete",
+              "tx.restore",
+              "admin.create",
+              "admin.reset-password",
+              "admin.disable",
+              "admin.enable",
+              "admin.delete",
+              "admin.change-own-password",
+            ],
           },
-          targetType: { type: "string", enum: ["user", "transaction"] },
+          targetType: { type: "string", enum: ["user", "transaction", "admin"] },
           targetId: { type: "string", nullable: true },
           detail: { type: "object", nullable: true, description: "变更前/后摘要，不含密钥" },
           ip: { type: "string", nullable: true },

@@ -125,7 +125,7 @@ const check = (name, ok, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
 };
 
-/* --------------------- 准备一个固定管理员 --------------------- */
+/* --------------------- 准备一个固定后台管理员（独立表） --------------------- */
 const stamp = Date.now().toString(36).slice(-5);
 const ADMIN_USER = `adm${stamp}`;
 const ADMIN_PASS = "Admin!23456789";
@@ -141,28 +141,25 @@ async function apiCall(path, init = {}) {
 }
 
 {
-  const r = await apiCall("/api/auth/register", {
-    method: "POST",
-    json: { username: ADMIN_USER, password: ADMIN_PASS, acceptedTerms: true },
-  });
-  if (r.status !== 200) throw new Error(`注册管理员失败：${r.status} ${JSON.stringify(r.body)}`);
+  // 后台管理员：直接写 admin_user（与前台 user 表无关）
+  const id = `adm_e2e_${stamp}`;
+  const script = [
+    "const{createClient}=require('@libsql/client')",
+    "const{randomBytes,scryptSync}=require('node:crypto')",
+    "const[user,pass,id]=process.argv.slice(1)",
+    "const salt=randomBytes(16).toString('hex')",
+    "const key=scryptSync(pass,salt,64,{N:16384,r:16,p:1,maxmem:67108864}).toString('hex')",
+    "const now=Date.now()",
+    "const c=createClient({url:'file:./apps/api/data/daybook.sqlite'})",
+    "c.execute({sql:'insert into admin_user (id,username,password_hash,name,status,created_at,updated_at) values (?,?,?,?,?,?,?)',args:[id,user,salt+':'+key,user,'active',now,now]}).then(()=>c.close()).catch(e=>{console.error(e);process.exit(1)})",
+  ].join(";");
+  spawnSync("node", ["-e", script, ADMIN_USER, ADMIN_PASS, id], { cwd: process.cwd(), stdio: "ignore" });
 
   const u = await apiCall("/api/auth/register", {
     method: "POST",
     json: { username: TARGET_USER, password: ADMIN_PASS, acceptedTerms: true },
   });
   if (u.status !== 200) throw new Error(`注册测试用户失败：${u.status}`);
-
-  const sql = `update user set role='admin' where username='${ADMIN_USER}';`;
-  spawnSync(
-    "node",
-    [
-      "-e",
-      "const{createClient}=require('@libsql/client');const c=createClient({url:'file:./apps/api/data/daybook.sqlite'});c.execute(process.argv[1]).then(()=>c.close())",
-      sql,
-    ],
-    { cwd: process.cwd(), stdio: "ignore" },
-  );
 }
 
 /* ----------------------------- 开始 ----------------------------- */
@@ -275,6 +272,18 @@ await waitFor("document.body.innerText.includes('已封禁')", 5000);
 await sleep(600);
 check("封禁成功并刷新", await cdp.ev("document.body.innerText.includes('已封禁')"));
 await cdp.shot("06-user-banned");
+
+/* ---- 4.5 管理员账号（后台独立体系） ---- */
+await cdp.ev(`window.__clickText('管理员账号', '.nav-item')`);
+await waitFor("document.body.innerText.includes('后台账号与前台 App 账号完全分离')");
+await cdp.shot("07-admins");
+check("管理员账号页渲染", await cdp.ev("document.body.innerText.includes('修改我的密码')"));
+check("列表含当前后台账号", await cdp.ev(`document.body.innerText.includes(${JSON.stringify(ADMIN_USER)})`));
+check("新建入口存在", await cdp.ev("document.body.innerText.includes('新建管理员')"));
+check(
+  "管理员页不含前台用户",
+  !(await cdp.ev(`document.body.innerText.includes(${JSON.stringify(TARGET_USER)})`)),
+);
 
 /* ---- 5. 流水审计 ---- */
 await cdp.ev(`window.__clickText('流水审计', '.nav-item')`);

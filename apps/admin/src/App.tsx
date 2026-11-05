@@ -7,6 +7,7 @@ import { navigate, useRoute } from "./lib/router";
 import { LoginScreen } from "./screens/LoginScreen";
 import { OverviewScreen } from "./screens/OverviewScreen";
 import { UsersScreen } from "./screens/UsersScreen";
+import { AdminsScreen } from "./screens/AdminsScreen";
 import { TransactionsScreen } from "./screens/TransactionsScreen";
 import { StatsScreen } from "./screens/StatsScreen";
 import { AuditScreen } from "./screens/AuditScreen";
@@ -15,6 +16,7 @@ import { SystemScreen } from "./screens/SystemScreen";
 const NAV: { key: string; label: string; icon: string }[] = [
   { key: "overview", label: "概览", icon: "◈" },
   { key: "users", label: "用户管理", icon: "◉" },
+  { key: "admins", label: "管理员账号", icon: "★" },
   { key: "transactions", label: "流水审计", icon: "☰" },
   { key: "stats", label: "统计分析", icon: "◔" },
   { key: "audit", label: "操作日志", icon: "✎" },
@@ -52,6 +54,8 @@ function Shell() {
     switch (current) {
       case "users":
         return <UsersScreen focusId={route.params[0]} />;
+      case "admins":
+        return <AdminsScreen />;
       case "transactions":
         return <TransactionsScreen initialUserId={route.params[0] ? decodeURIComponent(route.params[0]) : undefined} />;
       case "stats":

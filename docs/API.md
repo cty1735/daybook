@@ -14,6 +14,7 @@
 - [2. 通用约定](#2-通用约定)
 - [3. 系统接口](#3-系统接口)
 - [4. 账号接口](#4-账号接口)
+- [实时数据接口（/api/data，前端主路径）](#实时数据接口api数据前端主路径)
 - [5. 同步接口](#5-同步接口)
 - [6. 同步协议细节](#6-同步协议细节)
 - [7. 数据模型](#7-数据模型)
@@ -38,7 +39,7 @@
 后端只有两类职责：
 
 1. **账号**：注册 / 登录 / 登出 / 改密 / 设备管理 / 找回密码。
-2. **同步**：把前端 IndexedDB 里的账目增量推到服务端，或按游标拉回来。
+2. **数据**：账本以服务端为准，前端实时读写 `/api/data`；旧同步端点 `push/pull` 保留兼容。
 
 > 服务端**不做**记账业务计算：账目以 JSON payload 原样存储，谁更新更晚谁赢（LWW）。
 
@@ -399,6 +400,23 @@ IP 取值顺序：`X-Forwarded-For` → `X-Real-IP` → `CF-Connecting-IP` → `
 
 ---
 
+## 实时数据接口（`/api/data`，前端主路径）
+
+> 代码：`apps/api/src/routes/data.ts`。前端不再使用 IndexedDB：启动即 `GET /api/data` 拉全量，增删改实时回写；必须登录。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/data` | 返回完整 `AppData`（流水 + 分类/账户/预算/偏好）。新用户首次访问自动写入默认分类与账户。 |
+| POST | `/api/data/transactions` | `{ transactions: Transaction[] }`，幂等 upsert（含墓碑），返回 `{ accepted, rejected }`。 |
+| PUT | `/api/data/state` | `UserState` 整包覆盖；服务端保证时间戳单调递增，不会被旧的「未来时间」挡住。 |
+| DELETE | `/api/data/transactions` | 物理删除当前用户全部流水。 |
+| POST | `/api/data/reset` | 恢复出厂：删流水 + 重建默认状态，返回新的 `AppData`。 |
+| POST | `/api/data/replace` | 用 `AppData` 备份整体替换，返回替换后的 `AppData`。 |
+
+写入复用 `sync-service.ts` 的 LWW / 幂等 / 单调 `seq`，因此实时接口与旧同步接口看到的是同一份数据。
+
+---
+
 ## 5. 同步接口
 
 > 实现见 `apps/api/src/routes/sync.ts` + `src/lib/sync-service.ts`。
@@ -713,8 +731,14 @@ Invoke-RestMethod -Uri "$base/api/sync/pull?cursor=0&limit=10" -WebSession $sess
 | POST | `/api/auth/forgot-password` | — | 发起找回 |
 | POST | `/api/auth/reset-password` | — | 用令牌/恢复码重置 |
 | POST | `/api/auth/recovery-code` | ✅ | 重新生成恢复码 |
-| POST | `/api/sync/push` | ✅ | 推送变更 |
-| GET | `/api/sync/pull` | ✅ | 按游标拉取 |
+| GET | `/api/data` | ✅ | 拉完整账本（前端主路径） |
+| POST | `/api/data/transactions` | ✅ | 实时 upsert 流水 |
+| PUT | `/api/data/state` | ✅ | 保存分类/账户/预算/偏好 |
+| DELETE | `/api/data/transactions` | ✅ | 清空流水 |
+| POST | `/api/data/reset` | ✅ | 恢复出厂 |
+| POST | `/api/data/replace` | ✅ | 用备份整体替换 |
+| POST | `/api/sync/push` | ✅ | 推送变更（旧协议） |
+| GET | `/api/sync/pull` | ✅ | 按游标拉取（旧协议） |
 
 ---
 
@@ -724,22 +748,39 @@ Invoke-RestMethod -Uri "$base/api/sync/pull?cursor=0&limit=10" -WebSession $sess
 
 ### 10.1 前提与约定
 
-- 全部需要**已登录会话**且 `user.role` 含 `admin`，`user.banned` 为 `false`。
-  - 未登录 → `401 { code:"UNAUTHORIZED" }`
-  - 已登录非管理员 → `403 { code:"FORBIDDEN" }`
-  - 被封禁 → `403 { code:"BANNED_USER" }`
+- 后台使用**独立账号体系**：`admin_user` / `admin_session` 表 + HttpOnly Cookie `daybook_admin_session`。
+  前台 App 注册的 `user` 账号**不能**登录后台；`user.role` 不再参与后台鉴权（服务启动时会把旧的 `role=admin` 迁移成独立后台账号并降权）。
+  - 未登录 / 会话过期 / 账号被停用 → `401 { code:"UNAUTHORIZED" }`
   - 配了 `ADMIN_IP_ALLOWLIST` 且 IP 不在白名单 → `403 { code:"IP_FORBIDDEN" }`
+- 管理员账号由 `pnpm admin:create` 或后台「管理员账号」页创建，与前台用户名互不影响（可以同名）。
+- 后台登录同样有风控：连续 5 次失败锁 15 分钟；同一 IP 每小时最多 20 次尝试。
 - 列表统一游标分页：`{ data: [...], nextCursor: string | null }`；`nextCursor` 为 `null` 表示到底。
 - **邮箱脱敏**：`ab***@x.com`；内部占位邮箱（`*@daybook.local`）返回 `null`。
-- **敏感字段红线**：响应里永远不会出现 `account.password`、`user_recovery.code_hash`、`session.token`、`password_reset.token_hash`。
-- **写操作必留痕**：封禁、解封、授权、强制下线、流水软删、流水恢复都会写 `admin_audit_log`。
+- **敏感字段红线**：响应里永远不会出现 `account.password`、`admin_user.password_hash`、`admin_session.token_hash`、`user_recovery.code_hash`、`session.token`、`password_reset.token_hash`。
+- **写操作必留痕**：封禁、解封、强制下线、流水软删/恢复、管理员新建/改密/停用/删除都会写 `admin_audit_log`。
 
-### 10.2 身份与概览
+### 10.2 后台登录与管理员账号
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/admin/whoami` | 当前管理员身份（前端守卫用） |
-| GET | `/api/admin/overview` | 用户数 / 管理员数 / 封禁数 / 流水数 / 今日新增 / 7 日活跃会话 / 设备数 / 近 7 日趋势 |
+| POST | `/api/admin/auth/login` | body `{ username, password, rememberMe? }`。**独立登录**，不经过 better-auth；成功写 `daybook_admin_session` |
+| POST | `/api/admin/auth/logout` | 销毁当前后台会话并清 Cookie |
+| GET | `/api/admin/auth/me` | 当前后台管理员；未登录 401（前端守卫用） |
+| POST | `/api/admin/auth/me/password` | body `{ currentPassword, newPassword }`；成功后吊销本人全部会话并重新签发 |
+| GET | `/api/admin/auth/accounts` | 管理员列表（不含前台用户），带 `isSelf` |
+| POST | `/api/admin/auth/accounts` | 新建管理员 `{ username, password, name? }` |
+| POST | `/api/admin/auth/accounts/:id/password` | 重置某管理员密码；其全部会话立即失效 |
+| POST | `/api/admin/auth/accounts/:id/status` | body `{ status: "active" \| "disabled" }`；不能停用自己，至少保留一个可用管理员 |
+| DELETE | `/api/admin/auth/accounts/:id` | 删除管理员；不能删自己，至少保留一个可用管理员 |
+| GET | `/api/admin/whoami` | 兼容保留，等价于 `/api/admin/auth/me` |
+
+账号规则：用户名 3–20 位字母/数字/`_`/`-`；密码至少 8 位且同时含字母和数字。
+
+### 10.3 概览
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/overview` | 前台用户数 / 后台管理员数 / 封禁数 / 流水数 / 今日新增 / 7 日活跃会话 / 设备数 / 近 7 日趋势 |
 
 `overview` 响应示例：
 
@@ -754,20 +795,21 @@ Invoke-RestMethod -Uri "$base/api/sync/pull?cursor=0&limit=10" -WebSession $sess
 }
 ```
 
-### 10.3 用户管理
+### 10.4 用户管理（前台用户）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/admin/users` | 列表。参数：`q`（用户名/显示名/邮箱模糊搜，不区分大小写）、`role=admin\|user`、`banned=0\|1`、`sort=created\|lastLogin`、`cursor`、`limit`(≤100) |
+| GET | `/api/admin/users` | 列表。参数：`q`（用户名/显示名/邮箱模糊搜，不区分大小写）、`banned=0\|1`、`sort=created\|lastLogin`、`cursor`、`limit`(≤100) |
 | GET | `/api/admin/users/:id` | 详情：资料、会话、同步设备、流水统计、`user_state` 体积、最近 10 条流水 |
 | POST | `/api/admin/users/:id/ban` | 封禁。body `{ reason?, expiresIn? }`（`expiresIn` 单位秒）。**同时删除该用户全部会话** |
 | POST | `/api/admin/users/:id/unban` | 解封（清 `banned` / `banReason` / `banExpires`，`status` 回 `active`） |
-| POST | `/api/admin/users/:id/role` | body `{ role: "admin" \| "user" }`；不能撤销自己的管理员权限 |
 | POST | `/api/admin/users/:id/revoke-sessions` | 强制下线（删除全部会话，本机数据不动） |
+
+> 后台管理员在「管理员账号」页单独管理，**不再**通过给前台用户提权来获得后台权限；原 `/api/admin/users/:id/role` 已移除。
 
 封禁为什么能拦住登录：better-auth 的 `admin` 插件在**创建会话**时检查 `user.banned`，命中即抛 `BANNED_USER`；已登录设备则靠删除 `session` 立即失效。
 
-### 10.4 流水审计
+### 10.5 流水审计
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -779,7 +821,7 @@ Invoke-RestMethod -Uri "$base/api/sync/pull?cursor=0&limit=10" -WebSession $sess
 > **为什么必须重新分配 `seq`**：客户端按 `seq > cursor` 拉增量。直接 `UPDATE deleted_at` 不改变 `seq`，其他设备永远拉不到这次变更。
 > 重复删除返回 `400 ALREADY_DELETED`，重复恢复返回 `400 NOT_DELETED`，`payload` 损坏返回 `500 BAD_PAYLOAD`。
 
-### 10.5 统计
+### 10.6 统计
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -797,7 +839,7 @@ SET amount = coalesce(json_extract(payload,'$.amount'), 0),
     category_id = json_extract(payload,'$.categoryId');
 ```
 
-### 10.6 设备 / 审计 / 系统
+### 10.7 设备 / 审计 / 系统
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -805,33 +847,44 @@ SET amount = coalesce(json_extract(payload,'$.amount'), 0),
 | GET | `/api/admin/audit` | 操作日志。参数：`action`、`adminId`、`from`/`to`、`cursor`、`limit` |
 | GET | `/api/admin/system` | 版本、环境、运行时长、各表行数、最近一次后台操作时间 |
 
-审计 `action` 取值：`user.ban` / `user.unban` / `user.role` / `user.revoke-sessions` / `tx.soft-delete` / `tx.restore`。
+审计 `action` 取值：`user.ban` / `user.unban` / `user.revoke-sessions` / `tx.soft-delete` / `tx.restore` / `admin.create` / `admin.reset-password` / `admin.disable` / `admin.enable` / `admin.delete` / `admin.change-own-password`。
 
-### 10.7 进后台的最小步骤
+### 10.8 进后台的最小步骤
 
-管理员账号已直接写入本地数据库（凭据不在文档里记录）。需要新建/提权时：
+后台账号是**独立表**，与前台 App 账号无关。首次部署或忘记密码时在服务器/本地执行：
 
 ```powershell
-pnpm dev                                   # api + web + admin 一起起
-pnpm admin:create                          # 幂等：不存在则建默认管理员并提权
-pnpm admin:create -- myadmin MyPass12345   # 指定用户名与密码
-# 浏览器打开 http://localhost:5173/admin/ ，用该账号登录（前台是 http://localhost:5173/）
+# 从仓库根目录（脚本会自动跑迁移；已存在则只提示、不改密码）
+pnpm admin:create -- <用户名> <密码>
+
+# 等价：进入 apps/api 后直接跑
+pnpm -F @daybook/api admin:create -- <用户名> <密码>
 ```
 
-开发期**只从 5173 进入**：`/admin/*` 由 web 的 dev server 反向代理到 admin 的 5174，两个应用同源，
+> 服务器的 `.env` 不会被自动读取。生产环境要带上环境变量：
+> `cd /opt/daybook/daybook/apps/api && set -a && . ./.env && set +a && npx tsx src/scripts/create-admin.ts <用户名> <密码>`
+>
+> 已登录的后台管理员也可以直接在「管理员账号」页新建其他管理员，无需登录服务器。
+
+开发期只从 5173 进入：`/admin/*` 由 web 的 dev server 反向代理到 admin 的 5174，两个应用同源，
 Cookie 与 `WEB_ORIGINS` 都按 5173 一套口径，不需要为后台单独配置。
 
-也可以启动时批量提权：`$env:ADMIN_USERNAMES="你的用户名"; pnpm dev`，或直接改库
-`update user set role='admin' where username='xxx';`。
-
-### 10.8 PowerShell 调试
+### 10.9 PowerShell 调试
 
 ```powershell
-# 先登录拿 Cookie（会话共享，admin 接口复用同一个 Cookie）
+# 后台独立登录（注意：不是 /api/auth/login）
 $s = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-Invoke-RestMethod -Uri http://127.0.0.1:3001/api/auth/login -Method Post -WebSession $s `
+Invoke-RestMethod -Uri http://127.0.0.1:3001/api/admin/auth/login -Method Post -WebSession $s `
   -ContentType application/json -Headers @{ Origin = "http://localhost:5173" } `
-  -Body '{"username":"demo_admin","password":"Demo2026Pass"}'
+  -Body '{"username":"admin","password":"<你的后台密码>"}'
+
+# 当前管理员
+Invoke-RestMethod -Uri http://127.0.0.1:3001/api/admin/auth/me -WebSession $s
+
+# 新建管理员
+Invoke-RestMethod -Uri http://127.0.0.1:3001/api/admin/auth/accounts -Method Post -WebSession $s `
+  -ContentType application/json -Headers @{ Origin = "http://localhost:5173" } `
+  -Body '{"username":"ops","password":"OpsPass12345","name":"运营"}'
 
 # 概览
 Invoke-RestMethod -Uri http://127.0.0.1:3001/api/admin/overview -WebSession $s

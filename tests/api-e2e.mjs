@@ -82,9 +82,10 @@ const docPaths = Object.keys(openapi.json?.paths ?? {});
 check(
   "OpenAPI 规范可访问且覆盖全部接口",
   openapi.status === 200 &&
-    docPaths.length === 32 &&
+    docPaths.length === 39 &&
     docPaths.includes("/api/sync/push") &&
     docPaths.includes("/api/auth/register") &&
+    docPaths.includes("/api/admin/auth/login") &&
     docPaths.includes("/api/admin/users/{id}/ban") &&
     docPaths.includes("/api/admin/stats/categories"),
   `status=${openapi.status} paths=${docPaths.length}`,

@@ -1,7 +1,7 @@
 /* 管理后台接口（/api/admin/*）
    只做三块：用户管理、流水审计、统计概览。
    原则：
-   - 业务数据只读 + 软删/恢复，绝不替用户创建/修改分类账户（会与本地 IndexedDB 真相源冲突）
+   - 业务数据只读 + 软删/恢复，绝不替用户创建/修改分类账户（会与服务端真相源冲突）
    - 所有写操作（封禁/解封/授权/强制下线/软删/恢复）必须写审计日志
    - 响应体永不出现 password / code_hash / token / session token
    - 软删与恢复必须重新分配 seq，否则设备按 seq>cursor 拉不到变更
@@ -13,7 +13,7 @@ import { and, asc, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../db/client.ts";
 import { session, user } from "../db/auth-schema.ts";
-import { adminAuditLog, devices, ledgerTransactions, userState } from "../db/schema.ts";
+import { adminAuditLog, adminSession, adminUser, devices, ledgerTransactions, userState } from "../db/schema.ts";
 import type { Transaction } from "@daybook/shared";
 import { auditContext, isGuardOk, maskEmail, requireAdmin, writeAudit } from "../lib/admin-guard.ts";
 import { deviceLabel } from "../lib/account-service.ts";
@@ -112,11 +112,7 @@ adminRoutes.get("/overview", async (c) => {
   const [totalUsers, totalBanned, totalAdmins] = await Promise.all([
     db.select({ n: sql<number>`count(*)` }).from(user).then((r) => Number(r[0]?.n ?? 0)),
     db.select({ n: sql<number>`count(*)` }).from(user).where(eq(user.banned, true)).then((r) => Number(r[0]?.n ?? 0)),
-    db
-      .select({ n: sql<number>`count(*)` })
-      .from(user)
-      .where(sql`instr(coalesce(${user.role}, '') , 'admin') > 0`)
-      .then((r) => Number(r[0]?.n ?? 0)),
+    db.select({ n: sql<number>`count(*)` }).from(adminUser).then((r) => Number(r[0]?.n ?? 0)),
   ]);
 
   return c.json({
@@ -383,38 +379,6 @@ adminRoutes.post("/users/:id/unban", async (c) => {
   });
 
   return c.json({ data: { ok: true } });
-});
-
-adminRoutes.post("/users/:id/role", async (c) => {
-  const g = await requireAdmin(c);
-  if (!isGuardOk(g)) return g.response;
-
-  const id = c.req.param("id");
-  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
-  const role = String(body?.role ?? "").trim();
-  if (role !== "admin" && role !== "user") {
-    return c.json({ message: "角色只能是 admin 或 user", code: "INVALID_ROLE" }, 400);
-  }
-  if (id === g.user.id && role === "user") {
-    return c.json({ message: "不能撤销自己的管理员权限", code: "SELF_TARGET" }, 400);
-  }
-
-  const target = (await db.select().from(user).where(eq(user.id, id)).limit(1))[0];
-  if (!target) return c.json({ message: "用户不存在", code: "NOT_FOUND" }, 404);
-
-  await db.update(user).set({ role, updatedAt: new Date() }).where(eq(user.id, id));
-
-  const ctx = auditContext(c);
-  await writeAudit({
-    admin: g.user,
-    action: "user.role",
-    targetType: "user",
-    targetId: id,
-    detail: { before: target.role ?? "user", after: role },
-    ...ctx,
-  });
-
-  return c.json({ data: { ok: true, role } });
 });
 
 adminRoutes.post("/users/:id/revoke-sessions", async (c) => {
@@ -887,13 +851,15 @@ adminRoutes.get("/system", async (c) => {
   const g = await requireAdmin(c);
   if (!isGuardOk(g)) return g.response;
 
-  const [u, s, tx, st, dev, audit, lastAudit] = await Promise.all([
+  const [u, s, tx, st, dev, audit, adminCount, adminSessionCount, lastAudit] = await Promise.all([
     db.select({ n: sql<number>`count(*)` }).from(user).then((r) => Number(r[0]?.n ?? 0)),
     db.select({ n: sql<number>`count(*)` }).from(session).then((r) => Number(r[0]?.n ?? 0)),
     db.select({ n: sql<number>`count(*)` }).from(ledgerTransactions).then((r) => Number(r[0]?.n ?? 0)),
     db.select({ n: sql<number>`count(*)` }).from(userState).then((r) => Number(r[0]?.n ?? 0)),
     db.select({ n: sql<number>`count(*)` }).from(devices).then((r) => Number(r[0]?.n ?? 0)),
     db.select({ n: sql<number>`count(*)` }).from(adminAuditLog).then((r) => Number(r[0]?.n ?? 0)),
+    db.select({ n: sql<number>`count(*)` }).from(adminUser).then((r) => Number(r[0]?.n ?? 0)),
+    db.select({ n: sql<number>`count(*)` }).from(adminSession).then((r) => Number(r[0]?.n ?? 0)),
     db.select({ t: sql<number>`max(${adminAuditLog.createdAt})` }).from(adminAuditLog).then((r) => r[0]?.t ?? null),
   ]);
 
@@ -905,6 +871,8 @@ adminRoutes.get("/system", async (c) => {
       tables: {
         user: u,
         session: s,
+        adminUser: adminCount,
+        adminSession: adminSessionCount,
         ledgerTransactions: tx,
         userState: st,
         devices: dev,

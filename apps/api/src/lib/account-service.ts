@@ -28,32 +28,33 @@ export async function findUserByUsername(raw: string) {
   return rows[0] ?? null;
 }
 
-/** 登录前置检查；返回 null 表示放行 */
-export async function checkLoginAllowed(rawUsername: string, ip: string): Promise<string | null> {
+/** 登录前置检查；返回 null 表示放行
+ *  ipScope：IP 限流计数用的键。后台登录传 `admin:<ip>`，与前台 App 的计数互不影响。 */
+export async function checkLoginAllowed(rawUsername: string, ip: string, ipScope: string = ip): Promise<string | null> {
   const username = normalizeUsername(rawUsername);
   const now = Date.now();
 
   const attempt = (await db.select().from(loginAttempt).where(eq(loginAttempt.username, username)).limit(1))[0];
   if (attempt?.lockedUntil && attempt.lockedUntil.getTime() > now) return LOCKED_MESSAGE;
 
-  const ipRow = (await db.select().from(loginIp).where(eq(loginIp.ip, ip)).limit(1))[0];
+  const ipRow = (await db.select().from(loginIp).where(eq(loginIp.ip, ipScope)).limit(1))[0];
   if (ipRow && now - ipRow.windowStart.getTime() < IP_WINDOW_MS && ipRow.count >= IP_LIMIT) {
     return "尝试次数过多，请稍后再试";
   }
   return null;
 }
 
-export async function recordIpAttempt(ip: string): Promise<void> {
+export async function recordIpAttempt(ip: string, ipScope: string = ip): Promise<void> {
   const now = new Date();
-  const row = (await db.select().from(loginIp).where(eq(loginIp.ip, ip)).limit(1))[0];
+  const row = (await db.select().from(loginIp).where(eq(loginIp.ip, ipScope)).limit(1))[0];
   if (!row || now.getTime() - row.windowStart.getTime() >= IP_WINDOW_MS) {
     await db
       .insert(loginIp)
-      .values({ ip, count: 1, windowStart: now })
+      .values({ ip: ipScope, count: 1, windowStart: now })
       .onConflictDoUpdate({ target: loginIp.ip, set: { count: 1, windowStart: now } });
     return;
   }
-  await db.update(loginIp).set({ count: row.count + 1 }).where(eq(loginIp.ip, ip));
+  await db.update(loginIp).set({ count: row.count + 1 }).where(eq(loginIp.ip, ipScope));
 }
 
 /** 记录一次失败；达到阈值时锁定 15 分钟 */

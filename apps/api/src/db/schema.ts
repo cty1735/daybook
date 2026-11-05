@@ -69,6 +69,45 @@ export const devOtp = sqliteTable("dev_otp", {
 });
 
 /**
+ * 后台管理员账号：与前台 `user` 表**完全分离**。
+ * - 前台注册的账号不会出现在这里，也不能登录后台；
+ * - 后台管理员也不占用前台用户名（两边同名互不影响）；
+ * - password_hash 与 better-auth 同参数（scrypt N=16384 r=16 p=1，格式 salt:hash）。
+ */
+export const adminUser = sqliteTable(
+  "admin_user",
+  {
+    id: text("id").primaryKey(),
+    username: text("username").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    /** 显示名，留空时用 username */
+    name: text("name").notNull().default(""),
+    /** active | disabled */
+    status: text("status").notNull().default("active"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+    lastLoginAt: integer("last_login_at", { mode: "timestamp_ms" }),
+    lastLoginIp: text("last_login_ip"),
+  },
+  (t) => [uniqueIndex("admin_user_username_uq").on(t.username)],
+);
+
+/** 后台会话：与前台 session 表分离，令牌只存 SHA-256 */
+export const adminSession = sqliteTable(
+  "admin_session",
+  {
+    tokenHash: text("token_hash").primaryKey(),
+    adminId: text("admin_id").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    ip: text("ip"),
+    userAgent: text("user_agent"),
+  },
+  (t) => [index("admin_session_admin_ix").on(t.adminId), index("admin_session_expires_ix").on(t.expiresAt)],
+);
+
+
+/**
  * 后台审计日志：只插不改不删。
  * 封禁 / 解封 / 授权 / 强制下线 / 流水软删与恢复 等写操作都必须留痕。
  */

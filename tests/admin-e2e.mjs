@@ -5,6 +5,7 @@
 
 const BASE = process.env.API_BASE ?? "http://127.0.0.1:3001";
 const ORIGIN = "http://localhost:5174";
+import { execSync } from "node:child_process";
 
 let pass = 0;
 let fail = 0;
@@ -63,19 +64,36 @@ async function req(who, path, init = {}) {
 
 const rnd = Math.random().toString(36).slice(2, 8);
 const adminName = `adm_${rnd}`;
+const adminPass = "AdminPass12345";
 const victimName = `vic_${rnd}`;
 const victimPass = "Passw0rd!2345";
 
-section("注册与鉴权基线");
-{
-  const r = await req("anon", "/api/admin/overview");
-  ok("未登录访问后台 → 401", r.status === 401, `got ${r.status}`);
+/** 直接往 admin_user 插一条后台管理员（独立表，密码哈希与生产同参数） */
+function createAdminRow(username, password) {
+  const id = `adm_test_${username}`;
+  const script =
+    "const{createClient}=require('@libsql/client');" +
+    "const{randomBytes,scryptSync}=require('node:crypto');" +
+    "const[user,pass,id]=process.argv.slice(1);" +
+    "const salt=randomBytes(16).toString('hex');" +
+    "const key=scryptSync(pass,salt,64,{N:16384,r:16,p:1,maxmem:67108864}).toString('hex');" +
+    "const now=Date.now();" +
+    "const c=createClient({url:'file:./apps/api/data/daybook.sqlite'});" +
+    "c.execute({sql:'insert into admin_user (id,username,password_hash,name,status,created_at,updated_at) values (?,?,?,?,?,?,?)',args:[id,user,salt+':'+key,user,'active',now,now]})" +
+    ".then(()=>c.close()).catch(e=>{console.error(e);process.exit(1)})";
+  execSync(`node -e "${script}" "${username}" "${password}" "${id}"`, { cwd: process.cwd(), stdio: "pipe" });
+}
 
-  const reg = await req("admin", "/api/auth/register", {
-    method: "POST",
-    json: { username: adminName, password: "Admin!23456789", acceptedTerms: true },
-  });
-  ok("管理员账号注册成功", reg.status === 200 && reg.body?.user?.id, `got ${reg.status} ${JSON.stringify(reg.body).slice(0, 120)}`);
+section("后台独立账号：登录与鉴权基线");
+{
+  // 清掉历史登录风控计数（本地 e2e 会连续多次登录，避免 20 次/小时误伤）
+  execSync(
+    `node -e "const{createClient}=require('@libsql/client');const c=createClient({url:'file:./apps/api/data/daybook.sqlite'});Promise.all([c.execute('delete from login_ip'),c.execute('delete from login_attempt')]).then(()=>c.close()).catch(e=>{console.error(e);process.exit(1)})"`,
+    { cwd: process.cwd(), stdio: "pipe" },
+  );
+
+  const anon = await req("anon", "/api/admin/overview");
+  ok("未登录访问后台 → 401", anon.status === 401, `got ${anon.status}`);
 
   const reg2 = await req("victim", "/api/auth/register", {
     method: "POST",
@@ -84,22 +102,29 @@ section("注册与鉴权基线");
   ok("普通用户注册成功", reg2.status === 200 && reg2.body?.user?.id, `got ${reg2.status}`);
 
   const notAdmin = await req("victim", "/api/admin/overview");
-  ok("普通用户访问后台 → 403", notAdmin.status === 403, `got ${notAdmin.status}`);
-}
+  ok("前台登录用户不能进后台 → 401", notAdmin.status === 401, `got ${notAdmin.status}`);
 
-section("管理员提权（模拟 ADMIN_USERNAMES 启动逻辑）");
-{
-  // 直接走 sqlite 把 adminName 置为 admin，模拟启动时的 bootstrapAdmins
-  const { execSync } = await import("node:child_process");
-  const sql = `update user set role='admin' where username='${adminName}';`;
-  execSync(
-    `node -e "const{createClient}=require('@libsql/client');const c=createClient({url:'file:./apps/api/data/daybook.sqlite'});c.execute(process.argv[1]).then(()=>c.close())" "${sql}"`,
-    { cwd: process.cwd(), stdio: "pipe" },
-  );
+  const badLogin = await req("admin", "/api/admin/auth/login", {
+    method: "POST",
+    json: { username: adminName, password: "WrongPass123" },
+  });
+  ok("不存在的后台账号登录 → 401", badLogin.status === 401, `got ${badLogin.status}`);
+
+  createAdminRow(adminName, adminPass);
+
+  const login = await req("admin", "/api/admin/auth/login", {
+    method: "POST",
+    json: { username: adminName, password: adminPass },
+  });
+  ok("后台账号登录成功", login.status === 200 && login.body?.data?.username === adminName, `got ${login.status} ${JSON.stringify(login.body).slice(0, 120)}`);
+
+  const me = await req("admin", "/api/admin/auth/me");
+  ok("后台会话 /me 200 且 isSelf 数据一致", me.status === 200 && me.body?.data?.username === adminName, `got ${me.status}`);
 
   const r = await req("admin", "/api/admin/overview");
   ok("管理员访问概览 → 200", r.status === 200, `got ${r.status} ${JSON.stringify(r.body).slice(0, 160)}`);
   ok("概览含用户数", typeof r.body?.data?.users === "number", JSON.stringify(r.body?.data));
+  ok("概览含管理员数", typeof r.body?.data?.admins === "number", JSON.stringify(r.body?.data));
   ok("概览含 7 日趋势数组", Array.isArray(r.body?.data?.trend), "trend missing");
 }
 
@@ -241,22 +266,96 @@ section("审计日志留痕");
   ok("审计含管理员名", audit.body?.data?.[0]?.adminName, "adminName missing");
 }
 
-section("授权角色");
+section("管理员账号管理（后台独立体系）");
 {
-  const self = await req("admin", "/api/admin/users", { method: "GET" });
-  void self;
+  const meRes = await req("admin", "/api/admin/auth/me");
+  const meId = meRes.body?.data?.id;
 
-  const r = await req("admin", `/api/admin/users/${victimId}/role`, { method: "POST", json: { role: "admin" } });
-  ok("提权 200", r.status === 200, `got ${r.status}`);
+  const list = await req("admin", "/api/admin/auth/accounts");
+  ok("管理员列表 200", list.status === 200 && Array.isArray(list.body?.data), `got ${list.status}`);
+  ok("列表标记当前账号 isSelf", list.body?.data?.some((a) => a.username === adminName && a.isSelf === true), JSON.stringify(list.body?.data));
+  ok("列表不含前台用户", !list.body?.data?.some((a) => a.username === victimName), JSON.stringify(list.body?.data?.map((a) => a.username)));
+  ok("列表不含密码哈希", !/password_hash|passwordHash/.test(JSON.stringify(list.body)), "疑似泄漏哈希");
 
-  const d = await req("admin", `/api/admin/users/${victimId}`);
-  ok("角色已变为 admin", d.body?.data?.user?.role === "admin", JSON.stringify(d.body?.data?.user?.role));
+  const opsName = `ops_${rnd}`;
+  const create = await req("admin", "/api/admin/auth/accounts", {
+    method: "POST",
+    json: { username: opsName, password: "OpsPass12345", name: "测试运营" },
+  });
+  ok("新建管理员 200", create.status === 200 && create.body?.data?.username === opsName, `got ${create.status} ${JSON.stringify(create.body)}`);
+  const opsId = create.body?.data?.id;
 
-  const back = await req("admin", `/api/admin/users/${victimId}/role`, { method: "POST", json: { role: "user" } });
-  ok("降权回 user", back.status === 200 && back.body?.data?.role === "user", `got ${back.status}`);
+  const dup = await req("admin", "/api/admin/auth/accounts", {
+    method: "POST",
+    json: { username: opsName, password: "OpsPass12345" },
+  });
+  ok("同名管理员被拒 409", dup.status === 409, `got ${dup.status}`);
 
-  const bad = await req("admin", `/api/admin/users/${victimId}/role`, { method: "POST", json: { role: "root" } });
-  ok("非法角色被拒（400）", bad.status === 400, `got ${bad.status}`);
+  const weak = await req("admin", "/api/admin/auth/accounts", {
+    method: "POST",
+    json: { username: `weak_${rnd}`, password: "12345678" },
+  });
+  ok("弱密码被拒 400", weak.status === 400, `got ${weak.status}`);
+
+  const login2 = await req("admin2", "/api/admin/auth/login", {
+    method: "POST",
+    json: { username: opsName, password: "OpsPass12345" },
+  });
+  ok("新管理员可登录后台", login2.status === 200, `got ${login2.status}`);
+
+  const reset = await req("admin", `/api/admin/auth/accounts/${opsId}/password`, {
+    method: "POST",
+    json: { password: "OpsPass54321" },
+  });
+  ok("重置密码 200", reset.status === 200, `got ${reset.status}`);
+
+  const afterReset = await req("admin2", "/api/admin/auth/me");
+  ok("重置后旧会话失效 401", afterReset.status === 401, `got ${afterReset.status}`);
+
+  const login3 = await req("admin2", "/api/admin/auth/login", {
+    method: "POST",
+    json: { username: opsName, password: "OpsPass54321" },
+  });
+  ok("新密码可登录", login3.status === 200, `got ${login3.status}`);
+
+  const disable = await req("admin", `/api/admin/auth/accounts/${opsId}/status`, {
+    method: "POST",
+    json: { status: "disabled" },
+  });
+  ok("停用管理员 200", disable.status === 200, `got ${disable.status}`);
+
+  const login4 = await req("admin2", "/api/admin/auth/login", {
+    method: "POST",
+    json: { username: opsName, password: "OpsPass54321" },
+  });
+  ok("停用后无法登录 401", login4.status === 401, `got ${login4.status}`);
+
+  const enable = await req("admin", `/api/admin/auth/accounts/${opsId}/status`, {
+    method: "POST",
+    json: { status: "active" },
+  });
+  ok("启用管理员 200", enable.status === 200, `got ${enable.status}`);
+
+  const selfDisable = await req("admin", `/api/admin/auth/accounts/${meId}/status`, {
+    method: "POST",
+    json: { status: "disabled" },
+  });
+  ok("不能停用自己 409", selfDisable.status === 409, `got ${selfDisable.status}`);
+
+  const del = await req("admin", `/api/admin/auth/accounts/${opsId}`, { method: "DELETE" });
+  ok("删除管理员 200", del.status === 200, `got ${del.status}`);
+
+  const list2 = await req("admin", "/api/admin/auth/accounts");
+  ok("删除后列表不再包含", !list2.body?.data?.some((a) => a.id === opsId), JSON.stringify(list2.body?.data?.map((a) => a.username)));
+
+  const selfDel = await req("admin", `/api/admin/auth/accounts/${meId}`, { method: "DELETE" });
+  ok("不能删除自己 409", selfDel.status === 409, `got ${selfDel.status}`);
+
+  const audit = await req("admin", "/api/admin/audit?limit=50");
+  const actions = new Set((audit.body?.data ?? []).map((a) => a.action));
+  ok("审计记录了 admin.create", actions.has("admin.create"), [...actions].join(","));
+  ok("审计记录了 admin.reset-password", actions.has("admin.reset-password"), [...actions].join(","));
+  ok("审计记录了 admin.disable / admin.delete", actions.has("admin.disable") && actions.has("admin.delete"), [...actions].join(","));
 }
 
 section("系统信息");

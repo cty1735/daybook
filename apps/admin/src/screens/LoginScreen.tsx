@@ -1,4 +1,4 @@
-/* 后台登录页：复用 App 的 /api/auth/login（自带 5 次锁定 + IP 限流风控） */
+/* 后台登录页：走独立 /api/admin/auth/login（admin_user 表，与前台账号无关） */
 
 import { useState } from "react";
 import { ApiError, api } from "../lib/api";
@@ -36,7 +36,9 @@ export function LoginScreen({ onDone }: { onDone: () => void }) {
             <div style={{ fontSize: 12, color: "var(--t3)" }}>管理后台</div>
           </div>
         </div>
-        <div className="login-sub">仅管理员账号可登录。普通用户请使用 App。</div>
+        <div className="login-sub">
+          仅后台管理员账号可登录，与前台 App 账号完全独立。App 注册的用户不能登录这里。
+        </div>
 
         {error && <div className="error-box">{error}</div>}
 
@@ -65,6 +67,7 @@ export function LoginScreen({ onDone }: { onDone: () => void }) {
 
         <div style={{ marginTop: 16, fontSize: 11.5, color: "var(--t3)", lineHeight: 1.7 }}>
           连续 5 次密码错误将锁定 15 分钟；同一 IP 每小时最多 20 次登录尝试。
+          忘记密码请联系其他管理员在「管理员账号」页重置。
         </div>
       </div>
     </div>

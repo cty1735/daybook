@@ -1,4 +1,5 @@
-/* 用户管理：搜索 / 筛选 / 游标分页 / 用户详情抽屉（封禁、解封、授权、强制下线） */
+/* 用户管理：搜索 / 筛选 / 游标分页 / 用户详情抽屉（封禁、解封、强制下线）
+   注意：这里是**前台用户**，后台管理员在「管理员账号」页单独管理 */
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type UserDetail, type UserRow } from "../lib/api";
@@ -9,7 +10,6 @@ import { navigate } from "../lib/router";
 export function UsersScreen({ focusId }: { focusId?: string }) {
   const fb = useFeedback();
   const [q, setQ] = useState("");
-  const [role, setRole] = useState("");
   const [banned, setBanned] = useState("");
   const [sort, setSort] = useState<"created" | "lastLogin">("created");
   const [rows, setRows] = useState<UserRow[]>([]);
@@ -25,7 +25,6 @@ export function UsersScreen({ focusId }: { focusId?: string }) {
       try {
         const r = await api.users({
           q: q.trim() || undefined,
-          role: role || undefined,
           banned: banned || undefined,
           sort,
           cursor: append ? (nextCursor ?? undefined) : undefined,
@@ -39,7 +38,7 @@ export function UsersScreen({ focusId }: { focusId?: string }) {
         setLoading(false);
       }
     },
-    [q, role, banned, sort],
+    [q, banned, sort],
   );
 
   useEffect(() => {
@@ -51,7 +50,7 @@ export function UsersScreen({ focusId }: { focusId?: string }) {
       <div className="page-head">
         <div>
           <div className="page-title">用户管理</div>
-          <div className="page-desc">搜索、查看会话与流水概况，封禁 / 解封 / 授权 / 强制下线</div>
+          <div className="page-desc">搜索、查看会话与流水概况，封禁 / 解封 / 强制下线</div>
         </div>
       </div>
 
@@ -63,11 +62,6 @@ export function UsersScreen({ focusId }: { focusId?: string }) {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        <select className="select" value={role} onChange={(e) => setRole(e.target.value)}>
-          <option value="">全部角色</option>
-          <option value="admin">仅管理员</option>
-          <option value="user">仅普通用户</option>
-        </select>
         <select className="select" value={banned} onChange={(e) => setBanned(e.target.value)}>
           <option value="">全部状态</option>
           <option value="0">正常</option>
@@ -94,7 +88,6 @@ export function UsersScreen({ focusId }: { focusId?: string }) {
               <tr>
                 <th>用户名</th>
                 <th>邮箱</th>
-                <th>角色</th>
                 <th>状态</th>
                 <th>注册时间</th>
                 <th>最后登录</th>
@@ -109,9 +102,6 @@ export function UsersScreen({ focusId }: { focusId?: string }) {
                     <div style={{ fontSize: 11.5, color: "var(--t3)" }}>{u.id}</div>
                   </td>
                   <td style={{ color: "var(--t3)" }}>{u.email ?? "未绑定"}</td>
-                  <td>
-                    {u.role.includes("admin") ? <span className="chip ok">管理员</span> : <span className="chip mute">用户</span>}
-                  </td>
                   <td>
                     {u.banned ? (
                       <span className="chip over" title={u.banReason ?? ""}>
@@ -238,27 +228,6 @@ function UserDrawer({
     }
   };
 
-  const doRole = async (next: "admin" | "user") => {
-    const r = await fb.confirm({
-      title: next === "admin" ? "授予管理员权限" : "撤销管理员权限",
-      body: next === "admin" ? "该用户将可以访问管理后台全部功能。" : "该用户将失去后台访问权限。",
-      confirmText: next === "admin" ? "确认授予" : "确认撤销",
-      danger: next === "user",
-    });
-    if (!r.ok) return;
-    setBusy(true);
-    try {
-      await api.setRole(id, next);
-      onNotify(next === "admin" ? "已授予管理员" : "已撤销管理员");
-      await load();
-      onChanged();
-    } catch (e) {
-      onNotify(e instanceof Error ? e.message : "操作失败", true);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const doRevoke = async () => {
     const r = await fb.confirm({
       title: "强制下线",
@@ -301,8 +270,6 @@ function UserDrawer({
                 <dd className="num" style={{ fontSize: 12 }}>{u.id}</dd>
                 <dt>邮箱</dt>
                 <dd>{u.email ?? "未绑定"}</dd>
-                <dt>角色</dt>
-                <dd>{u.role.includes("admin") ? "管理员" : "普通用户"}</dd>
                 <dt>状态</dt>
                 <dd>
                   {u.banned ? (
@@ -326,15 +293,6 @@ function UserDrawer({
                 ) : (
                   <button className="btn danger" disabled={busy} onClick={() => void doBan()}>
                     封禁
-                  </button>
-                )}
-                {u.role.includes("admin") ? (
-                  <button className="btn" disabled={busy} onClick={() => void doRole("user")}>
-                    撤销管理员
-                  </button>
-                ) : (
-                  <button className="btn" disabled={busy} onClick={() => void doRole("admin")}>
-                    授予管理员
                   </button>
                 )}
                 <button className="btn" disabled={busy} onClick={() => void doRevoke()}>

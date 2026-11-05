@@ -1,64 +1,69 @@
-/* 创建 / 提升一个管理员账号（幂等）
+/* 创建后台管理员（独立 admin_user 表，与前台用户无关）
    用法：
-     pnpm -F @daybook/api admin:create                      # 使用脚本内置的默认账号
+     pnpm -F @daybook/api admin:create                      # 使用脚本内置默认账号
      pnpm -F @daybook/api admin:create -- <用户名> <密码>
-   或从根目录：pnpm admin:create
+   或从根目录：pnpm admin:create -- <用户名> <密码>
 
    行为：
-   - 用户不存在 → 走 better-auth 的 signUpEmail 建号（密码哈希、account 行都按官方流程生成）
-   - 用户已存在 → 只提升角色，**不改密码**
-   - 无论哪条路径，最后都置 role=admin、banned=false、status=active
-
-   注意：默认账号只用于本地开发。生产请用 `-- 用户名 强密码` 指定，或建好后在后台改密。 */
+   - 账号不存在 → 直接写入 admin_user（scrypt 哈希）
+   - 账号已存在 → 只提示，不改密码（改密请登录后台「管理员账号」页，或先删除再建）
+   - 生产环境务必显式传强密码 */
 
 import { eq } from "drizzle-orm";
-import { auth } from "../auth.ts";
 import { db } from "../db/client.ts";
-import { user } from "../db/auth-schema.ts";
+import { adminUser } from "../db/schema.ts";
 import { runMigrations } from "../db/migrate.ts";
-import { normalizeUsername } from "../lib/account-rules.ts";
+import { normalizeUsername, validatePassword, validateUsername } from "../lib/account-rules.ts";
+import { hashPassword } from "../lib/admin-auth.ts";
+import { uid } from "@daybook/shared";
 
 const DEFAULT_USERNAME = "daybook_admin";
 const DEFAULT_PASSWORD = "DayBook@2026";
 
-const args = process.argv.slice(2);
-const username = normalizeUsername(args[0] || DEFAULT_USERNAME);
+// pnpm 10 会把 `--` 原样传给脚本，这里过滤掉，避免用户名变成 "--"
+const args = process.argv.slice(2).filter((a) => a !== "--" && a.trim() !== "");
+const usernameRaw = args[0] || DEFAULT_USERNAME;
 const password = args[1] || DEFAULT_PASSWORD;
+
+const nameCheck = validateUsername(usernameRaw);
+if (!nameCheck.ok) {
+  console.error(`[admin:create] 用户名不合法：${nameCheck.message}`);
+  process.exit(1);
+}
+const username = normalizeUsername(usernameRaw);
+const pwCheck = validatePassword(password, username);
+if (!pwCheck.ok) {
+  console.error(`[admin:create] 密码不合法：${pwCheck.message}`);
+  process.exit(1);
+}
 
 await runMigrations();
 
-const existing = (await db.select().from(user).where(eq(user.username, username)).limit(1))[0];
+const existing = (await db.select().from(adminUser).where(eq(adminUser.username, username)).limit(1))[0];
 
 if (existing) {
-  await db
-    .update(user)
-    .set({ role: "admin", banned: false, banReason: null, banExpires: null, status: "active", updatedAt: new Date() })
-    .where(eq(user.id, existing.id));
-
-  console.log(`[admin:create] 已存在用户 ${username}（${existing.id}），已置为管理员。`);
-  console.log("[admin:create] 密码不会在这里改动：请在 App「我的 → 账号」里改密，或换个新用户名建号。");
+  console.log(`[admin:create] 管理员 ${username} 已存在（${existing.id}），未改动密码。`);
+  console.log("[admin:create] 需要改密：登录后台 →「管理员账号」→ 重置密码；或先删除该账号再重建。");
 } else {
-  // better-auth 的 user.email 必填且唯一；未绑定邮箱时用内部占位邮箱
-  const email = `${username}@daybook.local`;
-  const res = await auth.api.signUpEmail({
-    body: { email, password, name: username, username, displayUsername: username } as any,
-  });
-  const created = (res as any)?.user;
-  if (!created?.id) {
-    console.error("[admin:create] 建号失败：", res);
-    process.exit(1);
-  }
-  await db
-    .update(user)
-    .set({ role: "admin", banned: false, status: "active", updatedAt: new Date() })
-    .where(eq(user.id, created.id));
-
-  console.log(`[admin:create] 已创建管理员 ${username}（${created.id}）。`);
+  const now = new Date();
+  const row = {
+    id: uid("adm"),
+    username,
+    passwordHash: hashPassword(password),
+    name: username,
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+    lastLoginAt: null,
+    lastLoginIp: null,
+  };
+  await db.insert(adminUser).values(row);
+  console.log(`[admin:create] 已创建后台管理员 ${username}（${row.id}）。`);
 }
 
 console.log("");
 console.log("  用户名：" + username);
 console.log("  密码：  " + (existing ? "（原有密码，未改动）" : password));
-console.log("  后台：  http://localhost:5173/admin/");
+console.log("  后台：  /admin/（开发 http://localhost:5174/admin/）");
 console.log("");
-console.log("  仅本地开发使用；生产环境请改密或显式传强密码。");
+console.log("  后台账号与前台 App 账号完全独立，前台注册的用户不能登录后台。");

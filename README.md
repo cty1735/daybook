@@ -97,8 +97,8 @@ pnpm dev:web        # 不登录的话，前端完全自洽，同步页只会提�
 | `pnpm test` | 共享层单元测试（12 条） |
 | `pnpm test:api` | 后端协议端到端（36 条） |
 | `pnpm test:e2e` | 浏览器端到端（28 条，自动拉起/清理无头 Chrome） |
-| `pnpm test:admin` | 后台接口端到端（54 条，需先 `pnpm dev:api`） |
-| `pnpm test:admin:e2e` | 后台浏览器端到端（20 条，需先 `pnpm dev`；后台走 5173 的 `/admin/`） |
+| `pnpm test:admin` | 后台接口端到端（74 条，需先 `pnpm dev:api`） |
+| `pnpm test:admin:e2e` | 后台浏览器端到端（28 条，需先 `pnpm dev`；后台走 5173 的 `/admin/`） |
 | `pnpm db:generate` / `db:migrate` / `db:reset` | Drizzle 迁移生成 / 应用 / 重置本地库 |
 | `pnpm db:inspect` | 直接从 SQLite 文件侧核对落库情况 |
 | `pnpm admin:create` | 幂等创建/提升管理员（凭据见脚本输出） |
@@ -203,40 +203,34 @@ GET  /api/sync/pull    ?cursor=&limit=                               → { curso
 
 - **独立 app，不进用户包**：`apps/admin` 单独构建到 `dist/`，生产放在同域的 `/admin/` 静态目录。
 - **开发期只有一个入口**：`pnpm dev` 同时起 api(3001) + web(5173) + admin(5174)，但**只访问 `http://localhost:5173`**；`/` 是 App、`/admin/` 是后台，`/admin/*` 由 web 的 dev server 反向代理到 5174。这样两个应用共享同一个 origin，Cookie 天然可用，也不会出现「开过一次后台后刷新前台变成后台」的串台。
-- **鉴权复用 better-auth**：启用官方 `admin` 插件（`user.role` / `banned` / `banReason` / `banExpires`），后台接口统一走 `requireAdmin`（未登录 401、非管理员 403、可选 IP 白名单）。
+- **鉴权独立于前台**：后台使用**独立账号表** `admin_user` + `admin_session`（Cookie `daybook_admin_session`），与前台 `user` 完全分离。前台 App 注册的用户不能登录后台；旧版 `user.role='admin'` 会在启动时自动迁移成后台账号并降权。
+- **后台登录风控**：连续 5 次失败锁 15 分钟；同一 IP 每小时最多 20 次尝试（与前台计数隔离）。
 - **封禁立刻生效**：除写 `banned=true` 外，同时删除该用户全部 `session`，插件在创建会话时会拦下已封禁账号。
 - **邮箱脱敏**：列表/详情只返回 `ab***@x.com`；内部占位邮箱（`*@daybook.local`）返回 `null`。
-- **流水审计只读 + 软删/恢复**：绝不替用户创建/修改分类账户（会与本地 IndexedDB 真相源冲突）。软删/恢复都会**重新分配 `seq`**，否则设备按 `seq > cursor` 拉不到变更。
+- **流水审计只读 + 软删/恢复**：绝不替用户创建/修改分类账户（会与服务端真相源冲突）。软删/恢复都会**重新分配 `seq`**，否则设备按 `seq > cursor` 拉不到变更。
 - **物化列**：`ledger_transactions` 新增 `amount` / `tx_type` / `category_id`（`payload` 的投影），后台按金额区间、类型、分类聚合全部走索引；写入集中在 `sync-service.pushChanges()` 一处，历史数据由迁移里的 `json_extract` 一次性回填。
-- **审计日志**：`admin_audit_log` 只增不改不删；封禁/解封/授权/强制下线/软删/恢复六类操作全部留痕（操作人、目标、变更摘要、IP、UA）。
+- **审计日志**：`admin_audit_log` 只增不改不删；封禁/解封/强制下线/软删/恢复/管理员增删改密全部留痕（操作人、目标、变更摘要、IP、UA）。
 - **统计口径**：只算未删除流水；`transfer` / `adjustment` 不计收支；分类统计按**分类名**合并（每个用户有自己一套分类 UUID，运营要看「房租」合计而不是 N 条房租）。
 
 ### 怎么进后台
 
-管理员账号已直接写入本地数据库（不在文档里记录凭据）。需要新建或重置时用建号脚本：
+后台账号是独立表，只能用 `admin:create` 脚本或后台「管理员账号」页创建；**不能**用前台 App 账号登录，也不能靠给前台用户提权进后台。
 
 ```powershell
 pnpm dev                                   # api + web + admin 一起起（单一入口 5173）
-pnpm admin:create                          # 幂等：不存在则建默认管理员并提权
+pnpm admin:create                          # 不存在则建默认管理员；已存在只提示、不改密码
 pnpm admin:create -- myadmin MyPass12345   # 指定用户名与密码
 # 打开 http://localhost:5173/admin/ ，用该账号登录（前台是 http://localhost:5173/）
 ```
 
-其它提权方式：
-
-```powershell
-$env:ADMIN_USERNAMES="你的用户名"; pnpm dev   # 启动时自动提权（只提权不降权）
-```
-
-> 也可以直接改库：`update user set role='admin' where username='xxx';`
-
-- 后台登录复用 `/api/auth/login`，因此 **5 次失败锁 15 分钟 + 单 IP 20 次/小时** 自动生效。
-- 授权后可在后台页面互相授予/撤销管理员（不能撤销自己）。
+登录后可进「管理员账号」页：新建其他管理员、重置密码、停用/启用、删除（不能操作自己，至少保留一个可用管理员）。
+`ADMIN_USERNAMES` 提权机制已废弃；旧库里的 `user.role='admin'` 会在服务启动时自动迁移到 `admin_user`（沿用原密码哈希）并把前台角色降回 `user`。
 
 ### 后台接口
 
+`GET /api/admin/auth/{me,accounts}`、`POST /api/admin/auth/{login,logout,me/password}`、`POST /api/admin/auth/accounts/:id/{password,status}`、`DELETE /api/admin/auth/accounts/:id`
 `GET /api/admin/{whoami,overview,users,users/:id,transactions,transactions/:id,stats/totals,stats/categories,stats/daily,devices,audit,system}`
-`POST /api/admin/users/:id/{ban,unban,role,revoke-sessions}`、`POST /api/admin/transactions/:id/{delete,restore}`
+`POST /api/admin/users/:id/{ban,unban,revoke-sessions}`、`POST /api/admin/transactions/:id/{delete,restore}`
 
 完整参数与响应见 [`docs/API.md`](./docs/API.md) 与在线文档的「后台」分组。
 
@@ -266,7 +260,6 @@ $env:ADMIN_USERNAMES="你的用户名"; pnpm dev   # 启动时自动提权（只
 | `WEB_ORIGINS` | localhost/127.0.0.1 的 5173、4173、5174 | CORS 与 trustedOrigins 白名单（5174 仅用于直连后台 dev server 调试） |
 | `EXPOSE_DEV_AUTH` | 非生产为 `1` | **生产必须 `0`**（旧名 `EXPOSE_DEV_OTP` 兼容） |
 | `MAX_PUSH_BATCH` | `2000` | 单次 push 上限 |
-| `ADMIN_USERNAMES` | 空 | 启动时置为 admin 的用户名（逗号分隔，只提权不降权） |
 | `ADMIN_IP_ALLOWLIST` | 空 | 后台接口 IP 白名单（逗号分隔），空=不限制 |
 
 ---
