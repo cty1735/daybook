@@ -1,14 +1,15 @@
 # DayBook 自动部署流水线
 #
 # 设计要点：
-#   Gitee Go 云端构建器是 CentOS 7.6 + Node 8~15，跑不动本项目（要求 Node >= 22.6）。
+#   Gitee Go 云端构建器是 CentOS 7.6，官方 Node 插件只支持到 15.12.0，
+#   而本项目要求 Node >= 22.6（glibc 2.28+），云端装不上也跑不起来。
 #   因此云端只做「触发」，真正的构建与部署在主机组（121.89.86.53）本机执行，
-#   脚本见仓库根目录 deploy.sh。
+#   脚本见仓库根目录 deploy.sh。详见 docs/DEPLOY-GITEE-GO.md
 #
-# 启用前置条件（在 Gitee 网页端完成）：
+# 启用前置条件（Gitee 网页端）：
 #   1. 仓库页 →「流水线」→ 开通 Gitee Go（需账号绑定手机号）
-#   2. 主机管理 → 新建主机组（公网主机）→ 添加 121.89.86.53 → 按页面命令安装 Agent
-#   3. 把下面 hostGroupID 换成你实际的主机组标识（见主机组详情页）
+#   2. 主机管理 → 新建主机组（公网主机）→ 添加 121.89.86.53 → 执行页面给出的 Agent 安装命令
+#   3. 把下面 hostGroupID 换成实际的主机组标识（主机组详情页可见）
 
 version: '1.0'
 name: deploy
@@ -31,8 +32,12 @@ stages:
         name: deploy_shell
         displayName: 执行 deploy.sh
         hostGroupID: daybook-prod
-        script:
-          - set -e
-          - bash /opt/daybook/daybook/deploy.sh
+        script: |
+          set -e
+          # 先复制到临时目录再执行：deploy.sh 自身会被 git reset --hard 覆盖，
+          # 直接执行正在被改写的脚本有风险。
+          cp /opt/daybook/daybook/deploy.sh /tmp/daybook-deploy.sh
+          chmod +x /tmp/daybook-deploy.sh
+          bash /tmp/daybook-deploy.sh
         strategy:
           retry: '0'
