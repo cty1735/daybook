@@ -12,7 +12,7 @@
 
 | 部分 | 技术 | 说明 |
 |---|---|---|
-| 前端 | Vite 8 + React 19 + TypeScript + Zustand + Dexie | 移动端优先，桌面自动套手机框 |
+| 前端 | Vite 8 + React 19 + TypeScript + Zustand | 移动端优先，桌面自动套手机框；数据实时读写后端 |
 | 后端 | Node 22 + Hono 4 + Drizzle + SQLite(libSQL) + better-auth | 可选，单进程 ~100MB RSS |
 | 管理后台 | Vite 8 + React 19 + TypeScript（与前端同栈） | 同域 `/admin/`，仅管理员可进，只管用户 / 流水 / 统计 |
 | 共享层 | `packages/shared` | 类型 / Zod / 金额 / 日期 / 统计 / CSV / 同步协议，只写一份 |
@@ -30,11 +30,9 @@ daybook/                       ← monorepo 根（pnpm workspaces）
 │  │  └─ src/
 │  │     ├─ screens/           首页 / 明细 / 报表 / 我的 + 二级页
 │  │     ├─ components/        抽屉、金额键盘、图表（全自绘 SVG）、Toast…
-│  │     ├─ store/store.ts     全局状态 + 动作（写入即落 IndexedDB）
-│  │     ├─ lib/db.ts          Dexie 表结构、仓储层、outbox、同步游标
-│  │     ├─ lib/sync.ts        客户端同步引擎
-│  │     ├─ lib/api.ts         后端 API 客户端
-│  │     ├─ lib/backup.ts      本地每日备份（存 IndexedDB）
+│  │     ├─ store/store.ts     全局状态 + 动作（每次写入实时回写 /api/data）
+│  │     ├─ lib/api.ts         后端 API 客户端（含实时读写）
+│  │     ├─ lib/auth-state.ts  会话用户缓存
 │  │     ├─ lib/csv.ts         CSV 导出下载（浏览器专用）
 │  │     ├─ lib/select.ts      图标/符号映射等展示层
 │  │     ├─ styles/            tokens / base / components
@@ -105,26 +103,17 @@ pnpm dev:web        # 不登录的话，前端完全自洽，同步页只会提�
 
 ---
 
-## 数据层（P0：localStorage → IndexedDB）
+## 数据层（服务端为准）
 
-PRD §11 要求「支持 10 年约 5 万条、库 < 50MB、列表 60fps」。5 万条 JSON ≈ 12MB+，早已超出 localStorage 的 5–10MB 配额；而且 `zustand/persist` 每次变更都要同步 `JSON.stringify` 全量落盘，会直接卡主线程。所以本地持久化改成了 **IndexedDB（Dexie）**：
-
-| 表 | 主键/索引 | 用途 |
-|---|---|---|
-| `meta` | key | schemaVersion / budget / settings / lastUsed / categoryUsage / sync / deviceId |
-| `categories` | id（parentId, kind, sortOrder） | 分类 |
-| `accounts` | id（type, isArchived） | 账户 |
-| `transactions` | id（occurredAt, type, parentCategoryId, accountId, updatedAt, deletedAt） | 流水 |
-| `outbox` | ++seq（entity, entityId） | **待推送变更队列** |
-| `snapshots` | date | 本地每日备份（保留 7 份） |
+账本数据存在服务端 SQLite（`ledger_transactions` + `user_state`）。前端启动时 `GET /api/data` 拉全量，增删改实时回写 `/api/data/transactions` 与 `/api/data/state`；浏览器只保留主题镜像 `localStorage["daybook.theme"]`，用于首屏定色、避免深色用户闪白。
 
 要点：
 
-- **写入非阻塞**：所有写入走一个串行队列，异步落盘，主线程不再做全量序列化。
-- **事务**：批量写入用 Dexie 事务，避免半截状态。
-- **outbox**：每次增删改都追加一条变更记录，云同步时只推送这些增量（首次同步除外，见下）。
-- **一次性迁移**：若检测到旧的 `localStorage["daybook.v1"]`，会自动搬进 IndexedDB。
-- 主题额外镜像一份到 `localStorage["daybook.theme"]`，只为让 `index.html` 的首屏内联脚本在 hydration 之前就能定色，避免深色用户闪白。
+- **必须登录**：未登录只显示登录 / 注册页，不会在本地生成账本。
+- **写入幂等 + LWW**：复用同步协议的 UUID 幂等、Last-Write-Wins 与单调 `seq`，多端同时修改不会互相覆盖。
+- **分类 / 账户 / 预算 / 偏好**：整包存 `user_state`，前端 300ms 防抖合并提交。
+- **备份**：导入导出页的 JSON 备份走 `/api/data/replace` 整体替换；CSV 仍可随时导出。
+- **旧同步端点保留**：`/api/sync/push|pull` 仍在，兼容旧客户端与调试，但前端不再使用。
 
 ---
 
@@ -269,14 +258,14 @@ pnpm admin:create -- myadmin MyPass12345   # 指定用户名与密码
 ```powershell
 pnpm test        # 共享层单元测试（12 条）
 pnpm test:api    # 后端协议端到端（33 条，需先 pnpm dev:api）
-pnpm test:e2e    # 浏览器端到端（28 条，需先 pnpm dev）
+pnpm test:e2e    # 浏览器端到端（26 条，需先 pnpm dev）
 ```
 
 细节见 `tests/README.md`。三层覆盖的关键结论：
 
 - **单元**：LWW（新版本胜出 / 同分墓碑优先）、只让更新的远端覆盖本地、金额「分」整数与键盘 9 位整数 + 2 位小数、CSV 引号转义往返、CSV 错误行定位、导入判重、Zod 拒绝非法流水。
-- **后端**：未登录 401、注册并拿到恢复码、用户名大小写不敏感、错误密码统一文案、5 次失败锁定、改密后旧密码失效、恢复码重置后旧会话失效、设备列表含当前设备、幂等重推被拒、旧版本被拒、新版本被接受、**就地更新能被增量拉到**、墓碑随增量下发、用户状态整包 LWW、非法 payload 400、分页 `hasMore`、退出后 401。
-- **浏览器**：应用从 IndexedDB 正常引导、首启预置 16 条、记一笔落库并在整页刷新后仍在、outbox 记录待推送、旧 localStorage 自动迁移、页面内完成**注册 → 展示恢复码 → 首次全量上传（推送 18 / 拉取 18）**、账号页显示设备、退出登录后本机 18 条仍在、控制台零报错、零未捕获异常。
+- **后端**：未登录 401、注册并拿到恢复码、用户名大小写不敏感、错误密码统一文案、5 次失败锁定、改密后旧密码失效、恢复码重置后旧会话失效、设备列表含当前设备、**实时读写 `/api/data`（GET / upsert / state / replace / clear / reset）**、幂等重推被拒、旧版本被拒、新版本被接受、**就地更新能被增量拉到**、墓碑随增量下发、用户状态整包 LWW、非法 payload 400、分页 `hasMore`、退出后 401。
+- **浏览器**：未登录停在登录门禁、注册后直接进入应用、首页为空账本、记一笔实时写入服务端、整页刷新后从服务端恢复、账号页显示用户名、退出后回到登录门禁、重新登录数据仍在、控制台零报错、零未捕获异常。
 
 构建体积：前端约 444KB（gzip 139KB）。共享层刻意不导出 Zod schema（`@daybook/shared/schemas` 子路径），否则整个 Zod 会被打进客户端，白涨约 100KB。
 
@@ -286,8 +275,8 @@ pnpm test:e2e    # 浏览器端到端（28 条，需先 pnpm dev）
 
 1. **底部导航用 4 项**（首页 / 明细 / 报表 / 我的）。PRD §5.1 写 3 项，但 §5.2 把「首页（今日概览）」列为 L1 页面，且 F1、F5 都引用它，去掉首页会丢失「今日概览」这个核心入口。
 2. **明细的「左滑删除 / 右滑编辑」改为「点击编辑 + 多选批量」**（批量改分类 / 改账户 / 删除）。Web 上滑动手势与页面滚动、选中文本冲突严重，点击 + 多选更可靠，也更容易做无障碍。
-3. **本地备份从 localStorage 移到 IndexedDB**，原因同 P0。
-4. **PRD 未写云同步**（F8 是「本地优先、离线可用」）。云同步作为**可选**能力实现，不登录完全不影响使用。
+3. **备份从本地快照改为服务端 JSON 整体替换**（`/api/data/replace`）。
+4. **PRD 写的是「本地优先、离线可用」**；现改为**服务端为准、必须登录**，账本实时读写后端。这是本轮架构调整，PRD 原文尚未同步改写。
 
 ---
 

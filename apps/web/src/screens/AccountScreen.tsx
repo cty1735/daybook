@@ -8,6 +8,7 @@ import { useToast } from "../components/feedback";
 import { useNav } from "../nav";
 import { api, ApiError, type DeviceSession } from "../lib/api";
 import { setSessionUser, useSessionUser } from "../lib/auth-state";
+import { useStore } from "../store/store";
 
 function fmt(ts: number | null): string {
   if (!ts) return "—";
@@ -103,8 +104,9 @@ export function AccountScreen() {
       await api.logout();
     } finally {
       setSessionUser(null);
-      toast.show({ message: "已退出登录，本机数据保留", duration: 2600 });
-      nav.pop();
+      useStore.getState().logout();
+      toast.show({ message: "已退出登录", duration: 2600 });
+      nav.closeAll();
     }
   };
 
@@ -255,7 +257,7 @@ export function AccountScreen() {
           退出登录
         </button>
         <div className="xsmall muted-2" style={{ marginTop: 10, textAlign: "center", lineHeight: 1.7 }}>
-          只结束登录状态，本机账本记录完整保留，离线也能继续记账。
+          退出后需要重新登录才能继续使用，账本数据仍保存在云端。
         </div>
       </div>
     </SubPage>

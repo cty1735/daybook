@@ -15,6 +15,7 @@ import { assertProdConfig, env } from "./env.ts";
 import { accountRoutes } from "./routes/account.ts";
 import { adminAuthRoutes } from "./routes/admin-auth.ts";
 import { adminRoutes } from "./routes/admin.ts";
+import { dataRoutes } from "./routes/data.ts";
 import { syncRoutes } from "./routes/sync.ts";
 
 const VERSION = "1.0.0";
@@ -36,7 +37,7 @@ app.use(
     origin: (origin) => (env.webOrigins.includes(origin) ? origin : null),
     credentials: true,
     allowHeaders: ["Content-Type", "X-Device-Id"],
-    allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     maxAge: 600,
   }),
 );
@@ -60,6 +61,10 @@ app.route("/api/auth", accountRoutes);
 // better-auth 其余端点挂在 /api/auth/*
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
+// 实时读写（服务端为准）：/api/data
+app.route("/api/data", dataRoutes);
+
+// 旧的增量同步端点保留（备份/兼容用，前端不再使用）
 app.route("/api/sync", syncRoutes);
 
 // 管理后台（/api/admin/*）：独立后台会话校验在每条路由内做

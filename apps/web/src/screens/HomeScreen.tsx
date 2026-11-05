@@ -11,7 +11,6 @@ import { endOfDay, formatDayLabel, monthRange, startOfDay } from "@daybook/share
 import { sortByUsage } from "../lib/select";
 import { TxRow } from "../components/TxRow";
 import { EmptyArt } from "../components/EmptyArt";
-import { LoginPrompt } from "../components/LoginPrompt";
 
 export function HomeScreen() {
   const store = useStore();
@@ -54,9 +53,6 @@ export function HomeScreen() {
 
   return (
     <div className="page">
-      {/* 未登录提醒（可静默 7 天） */}
-      <LoginPrompt />
-
       {/* 今日支出 */}
       <div className="between" style={{ padding: "6px 2px 14px" }}>
         <div>
@@ -169,7 +165,7 @@ export function HomeScreen() {
           </div>
         </div>
         <div className="xsmall muted-2 center" style={{ marginTop: 10 }}>
-          记账 3 秒一笔 · 数据只存在你的设备上
+          记账 3 秒一笔 · 数据实时保存在云端
         </div>
       </div>
 
@@ -192,7 +188,7 @@ export function HomeScreen() {
       </div>
 
       <div className="xsmall muted-2 center" style={{ marginTop: 18, opacity: 0.8 }}>
-        {activeTxs(store.transactions).length} 条记录 · 本地存储
+        {activeTxs(store.transactions).length} 条记录 · 云端已同步
       </div>
     </div>
   );

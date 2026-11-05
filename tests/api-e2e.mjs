@@ -1,4 +1,4 @@
-/* 后端端到端验证：注册/登录（用户名+密码）→ push → pull → LWW → 墓碑 → 双设备 → 用户状态
+/* 后端端到端验证：注册/登录（用户名+密码）→ 实时读写 /api/data → 旧同步协议 push/pull → LWW → 墓碑 → 双设备 → 用户状态
    → 账号体系（大小写登录、改密、恢复码、设备、锁定、登出） */
 const BASE = process.env.API_BASE ?? "http://127.0.0.1:3001";
 const ORIGIN = process.env.ORIGIN ?? "http://localhost:5173";
@@ -78,12 +78,14 @@ check("健康检查", health.status === 200 && health.json?.ok === true, JSON.st
 // 0.1) 在线接口文档
 const openapi = await call("/api/openapi.json");
 const docPaths = Object.keys(openapi.json?.paths ?? {});
-// 14 个账号/同步接口 + 18 个后台接口
+// 14 个账号/同步接口 + 5 个实时数据接口 + 25 个后台接口（含后台独立登录/管理员账号）
 check(
   "OpenAPI 规范可访问且覆盖全部接口",
   openapi.status === 200 &&
-    docPaths.length === 39 &&
+    docPaths.length === 44 &&
     docPaths.includes("/api/sync/push") &&
+    docPaths.includes("/api/data") &&
+    docPaths.includes("/api/data/transactions") &&
     docPaths.includes("/api/auth/register") &&
     docPaths.includes("/api/admin/auth/login") &&
     docPaths.includes("/api/admin/users/{id}/ban") &&
@@ -220,14 +222,83 @@ check("非法变更被 400 拦下", bad.status === 400, `status=${bad.status}`);
 const paged = await call("/api/sync/pull?cursor=0&limit=1");
 check("分页 hasMore 正确", paged.json?.transactions?.length === 1 && paged.json?.hasMore === true, JSON.stringify({ n: paged.json?.transactions?.length, hasMore: paged.json?.hasMore }));
 
-// 17) 退出登录：只销毁会话，本机数据不动
+// 17) 实时数据接口：GET /api/data 一次拿完整账本
+const dataGet = await call("/api/data");
+check(
+  "实时数据接口返回完整账本",
+  dataGet.status === 200 &&
+    Array.isArray(dataGet.json?.transactions) &&
+    dataGet.json.categories.length === 1 &&
+    dataGet.json.accounts.length === 1,
+  `status=${dataGet.status} tx=${dataGet.json?.transactions?.length}`,
+);
+
+// 18) POST /api/data/transactions 实时写入并在下一次 GET 可见
+const liveTx = mkT("tx_live_1", 999, now + 40000);
+const livePush = await call("/api/data/transactions", { method: "POST", body: { transactions: [liveTx] } });
+check("实时写接口接受新记录", livePush.status === 200 && livePush.json?.accepted === 1, JSON.stringify(livePush.json));
+const dataAfter = await call("/api/data");
+check(
+  "实时写入后 GET 立即可见",
+  (dataAfter.json?.transactions ?? []).some((t) => t.id === "tx_live_1" && t.amount === 999),
+  `n=${dataAfter.json?.transactions?.length}`,
+);
+
+// 19) PUT /api/data/state 整包保存
+const stateOk = await call("/api/data/state", {
+  method: "PUT",
+  body: { ...stateV1, budget: { ...stateV1.budget, totalAmount: 123400 } },
+});
+check("实时状态接口保存成功", stateOk.status === 200 && stateOk.json?.ok === true, JSON.stringify(stateOk.json));
+const dataState = await call("/api/data");
+check("状态整包已更新", dataState.json?.budget?.totalAmount === 123400, String(dataState.json?.budget?.totalAmount));
+
+// 20) POST /api/data/replace 用备份整体替换
+const backup = {
+  schemaVersion: 1,
+  categories: [{ ...stateV1.categories[0], id: "cat_bak", name: "备份分类" }],
+  accounts: [stateV1.accounts[0]],
+  transactions: [mkT("tx_bak_1", 4321, now + 50000, { categoryId: "cat_bak", parentCategoryId: "cat_bak" })],
+  budget: { period: "monthly", startDay: 1, totalAmount: 88800, categoryLimits: {}, rollover: false },
+  settings: { theme: "dark", usageStats: false },
+  lastUsedCategoryId: null,
+  lastUsedAccountId: null,
+  categoryUsage: {},
+};
+const replaced = await call("/api/data/replace", { method: "POST", body: backup });
+check(
+  "备份整体替换成功",
+  replaced.status === 200 && replaced.json?.transactions?.length === 1 && replaced.json?.budget?.totalAmount === 88800,
+  `status=${replaced.status} tx=${replaced.json?.transactions?.length}`,
+);
+
+// 21) DELETE /api/data/transactions 与 POST /api/data/reset
+const cleared = await call("/api/data/transactions", { method: "DELETE" });
+check("清空流水接口成功", cleared.status === 200 && cleared.json?.ok === true, JSON.stringify(cleared.json));
+const afterClear = await call("/api/data");
+check(
+  "清空后流水为 0（分类/账户保留）",
+  afterClear.json?.transactions?.length === 0 && afterClear.json?.categories?.length === 1,
+  `tx=${afterClear.json?.transactions?.length} cat=${afterClear.json?.categories?.length}`,
+);
+
+const resetResult = await call("/api/data/reset", { method: "POST", body: {} });
+check(
+  "恢复出厂重置成功",
+  resetResult.status === 200 && resetResult.json?.transactions?.length === 0 && resetResult.json?.categories?.length >= 10,
+  `status=${resetResult.status} cat=${resetResult.json?.categories?.length}`,
+);
+
+// 22) 退出登录：只销毁会话，本机数据不动
 await call("/api/auth/logout", { method: "POST", body: {} });
 const afterOut = await call("/api/sync/pull?cursor=0");
 check("退出后 pull 返回 401", afterOut.status === 401, `status=${afterOut.status}`);
+const dataOut = await call("/api/data");
+check("退出后 /api/data 返回 401", dataOut.status === 401, `status=${dataOut.status}`);
 const sessOut = await call("/api/auth/session");
 check("退出后 session 为空", sessOut.json?.user === null, JSON.stringify(sessOut.json));
 
-// 18) 用户名大小写不敏感
+// 23) 用户名大小写不敏感
 const loginUpper = await call("/api/auth/login", {
   method: "POST",
   body: { username: username.toUpperCase(), password: PASSWORD },

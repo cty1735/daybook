@@ -940,6 +940,100 @@ export const openapiDocument = {
       },
     },
 
+    /* --------------------- 实时读写（服务端为准） --------------------- */
+    "/api/data": {
+      get: {
+        tags: ["数据"],
+        operationId: "getData",
+        summary: "拉取当前用户的完整账本",
+        description: "返回 AppData（流水 + 分类/账户/预算/偏好）。新用户首次访问会自动写入默认分类与账户。",
+        security: [{ cookieAuth: [] }],
+        responses: {
+          200: okJson("完整账本", { $ref: "#/components/schemas/AppData" }),
+          401: okJson("未登录", { type: "object", properties: { message: { type: "string" } } }, { message: "未登录" }),
+        },
+      },
+    },
+
+    "/api/data/transactions": {
+      post: {
+        tags: ["数据"],
+        operationId: "saveTransactions",
+        summary: "幂等 upsert 一批流水",
+        description: "复用同步写入语义：客户端 UUID + LWW + 单调 seq；可传墓碑（deletedAt 非空）。",
+        security: [{ cookieAuth: [] }],
+        requestBody: jsonBody(
+          { type: "object", required: ["transactions"], properties: { transactions: { type: "array", maxItems: 2000, items: transactionRef } } },
+          { transactions: [EXAMPLE_TX] },
+        ),
+        responses: {
+          200: okJson(
+            "写入结果",
+            { type: "object", properties: { accepted: { type: "integer" }, rejected: { type: "integer" } } },
+            { accepted: 1, rejected: 0 },
+          ),
+          400: okJson("参数不合法", { type: "object", properties: { message: { type: "string" }, issues: { type: "array", items: { type: "object" } } } }),
+          401: okJson("未登录", { type: "object", properties: { message: { type: "string" } } }, { message: "未登录" }),
+        },
+      },
+      delete: {
+        tags: ["数据"],
+        operationId: "clearTransactions",
+        summary: "清空当前用户流水",
+        security: [{ cookieAuth: [] }],
+        responses: {
+          200: okJson("已清空", { type: "object", properties: { ok: { type: "boolean" } } }, { ok: true }),
+          401: okJson("未登录", { type: "object", properties: { message: { type: "string" } } }, { message: "未登录" }),
+        },
+      },
+    },
+
+    "/api/data/state": {
+      put: {
+        tags: ["数据"],
+        operationId: "saveState",
+        summary: "保存用户级状态整包",
+        description: "分类 / 账户 / 预算 / 偏好整包覆盖（整包 LWW）。",
+        security: [{ cookieAuth: [] }],
+        requestBody: jsonBody(userStateRef, EXAMPLE_STATE),
+        responses: {
+          200: okJson("已保存", { type: "object", properties: { ok: { type: "boolean" } } }, { ok: true }),
+          400: okJson("参数不合法", { type: "object", properties: { message: { type: "string" }, issues: { type: "array", items: { type: "object" } } } }),
+          401: okJson("未登录", { type: "object", properties: { message: { type: "string" } } }, { message: "未登录" }),
+        },
+      },
+    },
+
+    "/api/data/reset": {
+      post: {
+        tags: ["数据"],
+        operationId: "resetData",
+        summary: "恢复出厂设置",
+        description: "删除全部流水与用户状态，重建默认分类/账户/预算，返回新的完整账本。",
+        security: [{ cookieAuth: [] }],
+        responses: {
+          200: okJson("重置后的账本", { $ref: "#/components/schemas/AppData" }),
+          401: okJson("未登录", { type: "object", properties: { message: { type: "string" } } }, { message: "未登录" }),
+        },
+      },
+    },
+
+    "/api/data/replace": {
+      post: {
+        tags: ["数据"],
+        operationId: "replaceData",
+        summary: "用备份整体替换",
+        description: "校验 AppData 后清空当前数据并写入备份内容，返回替换后的账本。",
+        security: [{ cookieAuth: [] }],
+        requestBody: jsonBody({ $ref: "#/components/schemas/AppData" }),
+        responses: {
+          200: okJson("替换后的账本", { $ref: "#/components/schemas/AppData" }),
+          400: okJson("备份格式不合法", { type: "object", properties: { message: { type: "string" }, issues: { type: "array", items: { type: "object" } } } }),
+          401: okJson("未登录", { type: "object", properties: { message: { type: "string" } } }, { message: "未登录" }),
+        },
+      },
+    },
+
     /* ------------------------- 管理后台 ------------------------- */
     ...adminPaths,
   },

@@ -11,7 +11,6 @@ export type SheetRoute =
   | "categories"
   | "io"
   | "recurring"
-  | "sync"
   | "monthReport"
   | "settings"
   | "login"
@@ -44,7 +43,6 @@ const SHEET_KEYS: SheetRoute[] = [
   "categories",
   "io",
   "recurring",
-  "sync",
   "monthReport",
   "settings",
   "login",

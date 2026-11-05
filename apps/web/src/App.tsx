@@ -1,14 +1,12 @@
-/* 应用外壳：引导（IndexedDB 加载）→ 顶栏 / 底部 Tab / FAB / 页面栈 */
+/* 应用外壳：登录门禁 → 顶栏 / 底部 Tab / FAB / 页面栈
+   服务端为准：必须先登录，启动时从 /api/data 拉取账本。 */
 
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Icon } from "./icons/Icon";
 import { NavProvider, useNav, type TabKey } from "./nav";
-import { ToastProvider } from "./components/feedback";
+import { ToastProvider, useToast } from "./components/feedback";
 import { RecordProvider, useRecord } from "./record";
-import { useStore } from "./store/store";
-import { hasTodaySnapshot, writeSnapshot } from "./lib/backup";
-import { isOnline, runSync } from "./lib/sync";
-import { api } from "./lib/api";
+import { setApiErrorHandler, useStore } from "./store/store";
 import { HomeScreen } from "./screens/HomeScreen";
 import { LedgerScreen } from "./screens/LedgerScreen";
 import { ReportScreen } from "./screens/ReportScreen";
@@ -18,7 +16,6 @@ import { AccountsScreen } from "./screens/AccountsScreen";
 import { CategoriesScreen } from "./screens/CategoriesScreen";
 import { ImportExportScreen } from "./screens/ImportExportScreen";
 import { RecurringScreen } from "./screens/RecurringScreen";
-import { SyncScreen } from "./screens/SyncScreen";
 import { LoginScreen } from "./screens/LoginScreen";
 import { RegisterScreen } from "./screens/RegisterScreen";
 import { ForgotScreen } from "./screens/ForgotScreen";
@@ -38,6 +35,20 @@ function ThemeGate() {
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, [theme]);
+
+  return null;
+}
+
+/* ---------------------------- 写失败提示 ---------------------------- */
+function ApiErrorBridge() {
+  const toast = useToast();
+  const ref = useRef(toast);
+  ref.current = toast;
+
+  useEffect(() => {
+    setApiErrorHandler((message) => ref.current.show({ message, tone: "err", duration: 4000 }));
+    return () => setApiErrorHandler(null);
+  }, []);
 
   return null;
 }
@@ -72,20 +83,21 @@ function Splash({ message }: { message: string }) {
 }
 
 function Boot({ children }: { children: ReactNode }) {
-  const hydrated = useStore((s) => s.hydrated);
+  const status = useStore((s) => s.status);
   const initError = useStore((s) => s.initError);
 
-  if (!hydrated) return <Splash message="正在打开本地账本…" />;
-  if (initError) {
+  if (status === "loading") return <Splash message="正在连接服务器…" />;
+  if (status === "error") {
     return (
       <div className="app-shell" style={{ display: "grid", placeItems: "center", padding: 24 }}>
         <div className="card" style={{ textAlign: "center" }}>
-          <b style={{ fontSize: 16 }}>本地数据库打开失败</b>
+          <b style={{ fontSize: 16 }}>连接服务器失败</b>
           <div className="xsmall muted-2" style={{ marginTop: 8, lineHeight: 1.7 }}>
-            {initError}
-            <br />
-            可能是浏览器处于隐私模式，或 IndexedDB 被禁用。
+            {initError || "请检查网络后重试"}
           </div>
+          <button className="btn btn-main btn-block" style={{ marginTop: 14 }} onClick={() => void useStore.getState().init()}>
+            重试
+          </button>
         </div>
       </div>
     );
@@ -150,8 +162,6 @@ function StackOverlay() {
       return <ImportExportScreen />;
     case "recurring":
       return <RecurringScreen />;
-    case "sync":
-      return <SyncScreen />;
     case "login":
       return <LoginScreen />;
     case "register":
@@ -203,39 +213,17 @@ function TopBar() {
 /* ---------------------------- 主壳 ---------------------------- */
 function Shell() {
   const nav = useNav();
-  const autoSync = useStore((s) => s.sync.autoSync);
+  const status = useStore((s) => s.status);
 
-  // 每日自动本地备份（PRD F7.4）+ 可选的自动云同步
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const s = useStore.getState();
-      if (!(await hasTodaySnapshot())) {
-        await writeSnapshot({
-          schemaVersion: s.schemaVersion,
-          categories: s.categories,
-          accounts: s.accounts,
-          transactions: s.transactions,
-          budget: s.budget,
-          settings: s.settings,
-          lastUsedCategoryId: s.lastUsedCategoryId,
-          lastUsedAccountId: s.lastUsedAccountId,
-          categoryUsage: s.categoryUsage,
-        });
-      }
-      if (cancelled || !autoSync || !isOnline()) return;
-      const user = await api.session();
-      if (cancelled || !user) return;
-      try {
-        await runSync();
-      } catch {
-        /* 自动同步失败不打扰用户 */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [autoSync]);
+  // 未登录：整屏登录门禁（注册 / 找回密码走页面栈）
+  if (status === "anon") {
+    return (
+      <div className="app-shell">
+        <LoginScreen />
+        <StackOverlay key="stack" />
+      </div>
+    );
+  }
 
   const screen =
     nav.tab === "home" ? <HomeScreen /> : nav.tab === "ledger" ? <LedgerScreen /> : nav.tab === "report" ? <ReportScreen /> : <MeScreen />;
@@ -248,7 +236,7 @@ function Shell() {
       </div>
       <Fab />
       <TabBar />
-      <StackOverlay />
+      <StackOverlay key="stack" />
     </div>
   );
 }
@@ -260,6 +248,7 @@ export function App() {
         <ToastProvider>
           <RecordProvider>
             <ThemeGate />
+            <ApiErrorBridge />
             <Shell />
           </RecordProvider>
         </ToastProvider>
