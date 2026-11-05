@@ -19,6 +19,13 @@
    ```
 
 4. 记下主机组的**标识 ID**，替换 `.workflow/deploy.yml` 里的 `hostGroupID: daybook-prod`
+
+   > `hostGroupID` 有两种写法，随平台版本不同：
+   > - 简写：`hostGroupID: daybook-prod`
+   > - 对象：`hostGroupID: {ID: daybook-prod, hostID: [<主机 UUID>]}`
+   >
+   > 以网页「可视化编辑」保存后生成的 YAML 为准，直接照抄最稳。
+
 5. 提交推送，之后每次 push 到 `master` 就会自动部署
 
 ## 手动执行（不依赖 Gitee Go）
