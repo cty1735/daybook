@@ -12,9 +12,8 @@ export const PASSWORD_MAX = 64;
 
 const USERNAME_RE = /^[A-Za-z0-9_-]+$/;
 
-/** 保留字（注册时禁止） */
+/** 保留字（注册时禁止；`admin` 例外：供运维预置的管理员账号登录） */
 const RESERVED_USERNAMES = new Set([
-  "admin",
   "administrator",
   "root",
   "system",
