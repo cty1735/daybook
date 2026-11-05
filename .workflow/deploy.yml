@@ -39,5 +39,3 @@ stages:
           cp /opt/daybook/daybook/deploy.sh /tmp/daybook-deploy.sh
           chmod +x /tmp/daybook-deploy.sh
           bash /tmp/daybook-deploy.sh
-        strategy:
-          retry: '0'
