@@ -1,13 +1,12 @@
 /* 导入 / 导出 / 备份（PRD F7） */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Icon } from "../icons/Icon";
 import { useStore } from "../store/store";
 import { useNav } from "../nav";
 import { SubPage } from "../components/SubPage";
 import { Dialog, useDialog, useToast, Switch } from "../components/feedback";
 import { downloadCSV, downloadJSON, downloadTemplate, mapImportedTransactions, parseCSV, type ParsedRow } from "../lib/csv";
-import { listSnapshots, readSnapshot, writeSnapshot, type SnapshotMeta } from "../lib/backup";
 import { formatMoney } from "@daybook/shared";
 import type { AppData } from "@daybook/shared";
 
@@ -28,13 +27,6 @@ export function ImportExportScreen() {
   const [preview, setPreview] = useState<CsvPreview | null>(null);
   const [skipDuplicates, setSkipDuplicates] = useState(true);
   const [jsonPreview, setJsonPreview] = useState<{ data: AppData; name: string } | null>(null);
-  const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([]);
-
-  const reloadSnapshots = async () => setSnapshots(await listSnapshots());
-
-  useEffect(() => {
-    void reloadSnapshots();
-  }, []);
 
   const totalRecords = useMemo(() => store.transactions.filter((t) => t.deletedAt === null).length, [store.transactions]);
 
@@ -142,51 +134,6 @@ export function ImportExportScreen() {
         <input ref={jsonInput} type="file" accept=".json,application/json" hidden onChange={(e) => e.target.files?.[0] && handleJson(e.target.files[0])} />
       </div>
 
-      {/* 自动备份 */}
-      <div className="section">
-        <div className="section-head">
-          <div className="section-title">本地自动备份</div>
-          <button className="link-btn" onClick={() => { void (async () => { await writeSnapshot(store); await reloadSnapshots(); toast.show({ message: "已生成本地快照", duration: 2000 }); })(); }}>
-            立即备份
-          </button>
-        </div>
-        {snapshots.length === 0 ? (
-          <div className="card xsmall muted-2">尚无快照。每日首次打开会自动生成，最多保留 7 份。</div>
-        ) : (
-          <div className="list">
-            {snapshots.map((s) => (
-              <div key={s.date} className="setting-row">
-                <span className="ic"><Icon name="clock" size={18} /></span>
-                <span className="tx"><b>{s.date}</b><span>{s.records} 条 · {(s.size / 1024).toFixed(0)} KB</span></span>
-                <button
-                  className="btn-round-sm"
-                  onClick={() =>
-                    dialog.confirm({
-                      title: `恢复到 ${s.date} 的快照？`,
-                      description: "当前数据将被该快照整体替换。",
-                      confirmLabel: "恢复",
-                      onConfirm: () => {
-                        void (async () => {
-                          const data = await readSnapshot(s.date);
-                          if (!data) {
-                            toast.show({ message: "快照已损坏", tone: "err", duration: 2500 });
-                            return;
-                          }
-                          const err = store.replaceAll(data);
-                          toast.show({ message: err ?? "已恢复", tone: err ? "err" : "ok", duration: 3000 });
-                        })();
-                      },
-                    })
-                  }
-                >
-                  恢复
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
       <div className="xsmall muted-2" style={{ marginTop: 16, lineHeight: 1.8 }}>
         · 导出文件命名：DayBook-YYYY-MM-DD-HHmm.csv<br />
         · 导入时同日期 + 同金额 + 同备注视为疑似重复
@@ -271,18 +218,14 @@ export function ImportExportScreen() {
                 ) : null}
               </div>
               <div className="xsmall muted-2" style={{ marginBottom: 14, lineHeight: 1.7 }}>
-                确认后将先为当前数据生成一份本地快照，再用备份整体替换。
+                确认后云端账本将被该备份整体替换，此操作不可撤销。
               </div>
               <button
                 className="btn btn-main btn-block"
                 onClick={() => {
-                  void (async () => {
-                    await writeSnapshot(store);
-                    const err = store.replaceAll(jsonPreview.data);
-                    toast.show({ message: err ?? "已从备份恢复", tone: err ? "err" : "ok", duration: 3000 });
-                    setJsonPreview(null);
-                    await reloadSnapshots();
-                  })();
+                  const err = store.replaceAll(jsonPreview.data);
+                  toast.show({ message: err ?? "已从备份恢复", tone: err ? "err" : "ok", duration: 3000 });
+                  setJsonPreview(null);
                 }}
               >
                 确认恢复

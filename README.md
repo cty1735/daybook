@@ -2,7 +2,7 @@
 
 > 3 秒记一笔，30 秒看懂这个月钱花在哪。
 
-本地优先的个人记账 Web App：**不登录也能完整使用**，数据默认只存在你自己的设备上；需要多设备或云备份时，可以登录你自己部署的轻量后端做增量同步。
+云端账本的个人记账 Web App：**账本实时读写自己的后端**，登录即可用，多设备天然一致（无需增量同步、无需本地缓存）。
 
 需求来源：`../产品PRO/PRD-日账-个人财务管家.md`（PRD v1.1）。
 
@@ -12,10 +12,10 @@
 
 | 部分 | 技术 | 说明 |
 |---|---|---|
-| 前端 | Vite 8 + React 19 + TypeScript + Zustand + Dexie | 移动端优先，桌面自动套手机框 |
-| 后端 | Node 22 + Hono 4 + Drizzle + SQLite(libSQL) + better-auth | 可选，单进程 ~100MB RSS |
+| 前端 | Vite 8 + React 19 + TypeScript + Zustand | 移动端优先，桌面自动套手机框；数据实时读写后端 |
+| 后端 | Node 22 + Hono 4 + Drizzle + SQLite(libSQL) + better-auth | **必需**（账本真相源），单进程 ~100MB RSS |
 | 管理后台 | Vite 8 + React 19 + TypeScript（与前端同栈） | 同域 `/admin/`，仅管理员可进，只管用户 / 流水 / 统计 |
-| 共享层 | `packages/shared` | 类型 / Zod / 金额 / 日期 / 统计 / CSV / 同步协议，只写一份 |
+| 共享层 | `packages/shared` | 类型 / Zod / 金额 / 日期 / 统计 / CSV / 旧同步协议，只写一份 |
 
 设计规范严格照 PRD §10「薄荷绿 · 轻盈可爱」执行（色板、圆角、间距、阴影、字体、深色模式全部落进 `apps/web/src/styles/tokens.css`）。
 
@@ -30,23 +30,23 @@ daybook/                       ← monorepo 根（pnpm workspaces）
 │  │  └─ src/
 │  │     ├─ screens/           首页 / 明细 / 报表 / 我的 + 二级页
 │  │     ├─ components/        抽屉、金额键盘、图表（全自绘 SVG）、Toast…
-│  │     ├─ store/store.ts     全局状态 + 动作（写入即落 IndexedDB）
-│  │     ├─ lib/db.ts          Dexie 表结构、仓储层、outbox、同步游标
-│  │     ├─ lib/sync.ts        客户端同步引擎
-│  │     ├─ lib/api.ts         后端 API 客户端
-│  │     ├─ lib/backup.ts      本地每日备份（存 IndexedDB）
+│  │     ├─ store/store.ts     全局状态 + 动作（每次写入实时回写 /api/data）
+│  │     ├─ lib/api.ts         后端 API 客户端（含实时读写）
+│  │     ├─ lib/auth-state.ts  会话用户缓存
 │  │     ├─ lib/csv.ts         CSV 导出下载（浏览器专用）
+│  │     ├─ lib/legacy-import.ts 旧版本地账本（IndexedDB）一次性搬家
 │  │     ├─ lib/select.ts      图标/符号映射等展示层
 │  │     ├─ styles/            tokens / base / components
 │  │     └─ icons/Icon.tsx     ~60 个自绘线性 SVG 图标
 │  ├─ api/                     后端
-│     ├─ src/auth.ts           better-auth（用户名 + 密码 + admin 插件）
+│     ├─ src/auth.ts           better-auth（用户名 + 密码）
 │     ├─ src/routes/account.ts 注册 / 登录 / 改密 / 设备 / 找回
+│     ├─ src/routes/data.ts    /api/data：整本账实时读写（前端主路径）
 │     ├─ src/routes/admin.ts   /api/admin/*：用户 / 流水审计 / 统计 / 审计日志
 │     ├─ src/lib/admin-guard.ts  requireAdmin + 邮箱脱敏 + 审计写入
 │     ├─ src/db/               schema / 连接 / 迁移 / 重置
-│     ├─ src/lib/sync-service.ts  push / pull 的服务端实现
-│     ├─ src/routes/           sync 路由 + [[docs/API.md]] 对应实现
+│     ├─ src/lib/sync-service.ts  LWW / 幂等 / 单调 seq 的写入实现
+│     ├─ src/routes/sync.ts    旧 push / pull 路由（前端不再调用）
 │     └─ drizzle/              由 drizzle-kit 生成的迁移 SQL
 │  └─ admin/                   管理后台（同域 /admin/，开发期经 5173 代理）
 │     └─ src/
@@ -65,22 +65,17 @@ daybook/                       ← monorepo 根（pnpm workspaces）
 
 ```powershell
 pnpm install
-pnpm dev            # 同时起 api(3001) 与 web(5173)
+pnpm dev            # 同时起 api(3001) + web(5173) + admin(5174)
 ```
 
 打开 <http://localhost:5173>。
 后端起来后，接口文档在 <http://127.0.0.1:3001/api/docs>（Swagger UI，可在线调试），OpenAPI 原始规范在 `/api/openapi.json`。
 
 - 新用户首次打开是一本空账：不预置任何示例流水、账户初始余额与预算金额都是 0；想预览报表效果可在「我的 → 数据 → 载入示例数据」，之后随时可清空。
-- 首页会在未登录时提示注册/登录（可「以后再说」静默 7 天），登录只用于云同步与换机找回，不登录也能完整记账。
-- 想试账号与同步：「我的」顶部「未登录」→ 注册（用户名 + 密码）→ 记住恢复码 → 回到「云同步」点「立即同步」。
+- **必须注册/登录**才能记账：未登录只显示登录 / 注册页，账本数据全部存在云端，换设备登录同一账号即可看到全部记录。
+- 注册（用户名 + 密码）后请记住恢复码，用于换机或忘记密码时找回。
   开发模式下没有 SMTP，找回密码的重置令牌会直接随接口返回（`EXPOSE_DEV_AUTH=1`）。
-
-只需前端（不跑后端）：
-
-```powershell
-pnpm dev:web        # 不登录的话，前端完全自洽，同步页只会提示「后端未连接」
-```
+- 前端与后端必须一起跑：没有后端就没有账本。
 
 ---
 
@@ -94,81 +89,43 @@ pnpm dev:web        # 不登录的话，前端完全自洽，同步页只会提�
 | `pnpm build` | web + admin 生产构建 + 后端类型检查 |
 | `pnpm typecheck` | 四个包全量类型检查 |
 | `pnpm lint` | oxlint（仅警告，无 error） |
-| `pnpm test` | 共享层单元测试（12 条） |
-| `pnpm test:api` | 后端协议端到端（36 条） |
-| `pnpm test:e2e` | 浏览器端到端（28 条，自动拉起/清理无头 Chrome） |
-| `pnpm test:admin` | 后台接口端到端（74 条，需先 `pnpm dev:api`） |
+| `pnpm test` | 共享层单元测试（13 条） |
+| `pnpm test:api` | 后端协议端到端（47 条） |
+| `pnpm test:e2e` | 浏览器端到端（26 条，自动拉起/清理无头 Chrome） |
+| `pnpm test:admin` | 后台接口端到端（78 条，需先 `pnpm dev:api`） |
 | `pnpm test:admin:e2e` | 后台浏览器端到端（28 条，需先 `pnpm dev`；后台走 5173 的 `/admin/`） |
-| `pnpm db:generate` / `db:migrate` / `db:reset` | Drizzle 迁移生成 / 应用 / 重置本地库 |
+| `pnpm db:generate` / `db:migrate` / `db:reset` | Drizzle 迁移生成 / 应用 / 重置数据库 |
 | `pnpm db:inspect` | 直接从 SQLite 文件侧核对落库情况 |
 | `pnpm admin:create` | 幂等创建/提升管理员（凭据见脚本输出） |
 
 ---
 
-## 数据层（P0：localStorage → IndexedDB）
+## 数据层（云端为准）
 
-PRD §11 要求「支持 10 年约 5 万条、库 < 50MB、列表 60fps」。5 万条 JSON ≈ 12MB+，早已超出 localStorage 的 5–10MB 配额；而且 `zustand/persist` 每次变更都要同步 `JSON.stringify` 全量落盘，会直接卡主线程。所以本地持久化改成了 **IndexedDB（Dexie）**：
-
-| 表 | 主键/索引 | 用途 |
-|---|---|---|
-| `meta` | key | schemaVersion / budget / settings / lastUsed / categoryUsage / sync / deviceId |
-| `categories` | id（parentId, kind, sortOrder） | 分类 |
-| `accounts` | id（type, isArchived） | 账户 |
-| `transactions` | id（occurredAt, type, parentCategoryId, accountId, updatedAt, deletedAt） | 流水 |
-| `outbox` | ++seq（entity, entityId） | **待推送变更队列** |
-| `snapshots` | date | 本地每日备份（保留 7 份） |
+账本数据存在云端 SQLite（`ledger_transactions` + `user_state`）。前端启动时 `GET /api/data` 拉全量，增删改实时回写 `/api/data/transactions` 与 `/api/data/state`；浏览器只保留主题镜像 `localStorage["daybook.theme"]`，用于首屏定色、避免深色用户闪白。
 
 要点：
 
-- **写入非阻塞**：所有写入走一个串行队列，异步落盘，主线程不再做全量序列化。
-- **事务**：批量写入用 Dexie 事务，避免半截状态。
-- **outbox**：每次增删改都追加一条变更记录，云同步时只推送这些增量（首次同步除外，见下）。
-- **一次性迁移**：若检测到旧的 `localStorage["daybook.v1"]`，会自动搬进 IndexedDB。
-- 主题额外镜像一份到 `localStorage["daybook.theme"]`，只为让 `index.html` 的首屏内联脚本在 hydration 之前就能定色，避免深色用户闪白。
+- **未登录也能进**：打开就是首页（空账本，可看界面），记账 / 导出等写操作会引导登录；浏览器不存任何账本副本。
+- **写入幂等 + LWW**：复用同步协议的 UUID 幂等、Last-Write-Wins 与单调 `seq`，多端同时修改不会互相覆盖。
+- **分类 / 账户 / 预算 / 偏好**：整包存 `user_state`，前端 300ms 防抖合并提交。
+- **备份**：导入导出页的 JSON 备份走 `/api/data/replace` 整体替换；CSV 仍可随时导出。
+- **旧同步端点保留**：`/api/sync/push|pull` 仍在，兼容旧客户端与调试，但前端不再使用。
 
 ---
 
-## 同步协议（自建，push / pull + LWW + 单调游标）
+## 旧同步协议（已弃用）
 
-服务端表 `ledger_transactions`：一行一条流水，`payload` 存完整 JSON。
+前端已改为实时读写 `/api/data`，`POST /api/sync/push` 与 `GET /api/sync/pull` 这套 push / pull 增量同步**前端不再调用**，仅为旧客户端与调试保留。协议细节（`seq` 游标、LWW、墓碑、首次全量上传）见 [`docs/API.md` §5–6](./docs/API.md)，新客户端不需要了解。
 
-```
-key       INTEGER PK AUTOINCREMENT   -- 内部行号
-id        TEXT                       -- 客户端生成的 UUID
-user_id   TEXT
-seq       INTEGER NOT NULL           -- 每个用户一条「逻辑同步序号」
-updated_at / deleted_at / occurred_at INTEGER
-UNIQUE(user_id, id)
-```
-
-设计取舍：
-
-- **幂等**：客户端生成 UUID + `UNIQUE(user_id,id)`，重复推送不会产生重复数据。
-- **冲突**：Last-Write-Wins，比 `updatedAt`；完全相等时「墓碑（已删除）」优先，避免记录被复活。
-- **增量游标用 `seq` 而不是时间戳**：用户可能改设备时间，时间戳不可靠。
-  注意 `seq` 不是自增主键 —— 每次 *被接受的写入* 都重新分配一个新的 `seq`，
-  这样「就地更新一条老记录」也能被其他设备按增量拉到（只靠自增主键会漏掉更新）。
-- **时间戳归一化**：服务端把客户端的 `updatedAt` 夹在 `[0, serverNow + 60s]` 之间后回写，
-  保证多设备口径一致、也防止未来时间戳永远取胜。
-- **删除用墓碑**：`deletedAt` 随记录一起同步，而不是真删。
-- **用户级状态整包 LWW**：分类 / 账户 / 预算 / 偏好存在 `user_state`，数据量小（几十 KB），整包覆盖比字段级合并简单可靠。
-
-接口：
-
-```
-POST /api/sync/push    { deviceId, cursor, transactions[], state? }  → { accepted, rejected, cursor, serverTime, stateAccepted }
-GET  /api/sync/pull    ?cursor=&limit=                               → { cursor, hasMore, transactions[], state, serverTime }
-```
-
-**首次同步 = 全量上传**：从没同步过时（无游标且无时间戳），客户端会把本机全部记录与分类/账户设置一次性推上去。
-否则预置/迁移进来的历史数据会因为「不在 outbox 里」而永远上不了云 —— 这是实现过程中发现并修掉的一个真实缺陷。
+> 实时接口不存在「首次全量上传」「游标漏拉」这类问题：每次 `GET /api/data` 就是整本账，写入直接落云端。
 
 ---
 
 ## 鉴权（PRD v1.2 F0 账号体系）
 
 - **用户名 + 密码**（better-auth 1.7 的 `username` + `emailAndPassword`），邮箱可选、**只用于找回密码**。
-- 账号是「解锁能力」不是门槛：不登录也能记账、导出、本地备份（决策 D1）。
+- 账号即门槛：账本存在云端，**记账 / 导出必须登录**（决策 D1 已改为「云端为准」）；未登录可浏览首页由首页提示卡进入登录。
 - 注册规则：用户名 3–20 位（字母/数字/`_`/`-`，不区分大小写，禁纯数字与保留字）；密码 8–64 位且必须字母+数字，拒绝弱密码与近似用户名。
 - 注册即发 **8 位恢复码**（`XXXX-XXXX`，只在注册响应里出现一次，库里只存 SHA-256）。
 - 登录风控：同一用户名连续 5 次失败 → 锁定 15 分钟；同一 IP 每小时最多 20 次；失败文案统一为「用户名或密码不正确」防枚举。
@@ -184,7 +141,7 @@ GET  /api/sync/pull    ?cursor=&limit=                               → { curso
 |---|---|---|
 | POST | `/api/auth/register` | 注册 → 会话 + 恢复码 |
 | POST | `/api/auth/login` | 用户名 + 密码（含风控与锁定） |
-| POST | `/api/auth/logout` | 销毁当前会话，本机数据不动 |
+| POST | `/api/auth/logout` | 销毁当前会话，云端账本不动 |
 | GET | `/api/auth/session` | 当前用户（`email` 为内部占位邮箱时返回 `null`） |
 | GET | `/api/auth/check-username` | 注册页失焦查重 |
 | POST | `/api/auth/change-password` | 旧密码 + 新密码 → 撤销其他会话 |
@@ -207,7 +164,7 @@ GET  /api/sync/pull    ?cursor=&limit=                               → { curso
 - **后台登录风控**：连续 5 次失败锁 15 分钟；同一 IP 每小时最多 20 次尝试（与前台计数隔离）。
 - **封禁立刻生效**：除写 `banned=true` 外，同时删除该用户全部 `session`，插件在创建会话时会拦下已封禁账号。
 - **邮箱脱敏**：列表/详情只返回 `ab***@x.com`；内部占位邮箱（`*@daybook.local`）返回 `null`。
-- **流水审计只读 + 软删/恢复**：绝不替用户创建/修改分类账户（会与服务端真相源冲突）。软删/恢复都会**重新分配 `seq`**，否则设备按 `seq > cursor` 拉不到变更。
+- **流水审计只读 + 软删/恢复**：绝不替用户创建/修改分类账户（会与云端真相源冲突）。软删/恢复都会**重新分配 `seq`**，否则设备按 `seq > cursor` 拉不到变更。
 - **物化列**：`ledger_transactions` 新增 `amount` / `tx_type` / `category_id`（`payload` 的投影），后台按金额区间、类型、分类聚合全部走索引；写入集中在 `sync-service.pushChanges()` 一处，历史数据由迁移里的 `json_extract` 一次性回填。
 - **审计日志**：`admin_audit_log` 只增不改不删；封禁/解封/强制下线/软删/恢复/管理员增删改密全部留痕（操作人、目标、变更摘要、IP、UA）。
 - **统计口径**：只算未删除流水；`transfer` / `adjustment` 不计收支；分类统计按**分类名**合并（每个用户有自己一套分类 UUID，运营要看「房租」合计而不是 N 条房租）。
@@ -243,7 +200,7 @@ pnpm admin:create -- myadmin MyPass12345   # 指定用户名与密码
   libSQL 的平台二进制走 npm registry，装完即用。
 - 表结构在 `apps/api/src/db/{schema,auth-schema}.ts`，迁移 SQL 由 `drizzle-kit generate` 输出到 `apps/api/drizzle/`。
 - 服务启动时会自动跑一次迁移（幂等），所以 `pnpm dev` 即可，不用手动建表。
-- 本机数据库文件在 `apps/api/data/daybook.sqlite`（已 gitignore）。
+- 开发期数据库文件在 `apps/api/data/daybook.sqlite`（已 gitignore）；生产在服务器的 `/opt/daybook/data/daybook.sqlite`。
 
 ---
 
@@ -267,16 +224,16 @@ pnpm admin:create -- myadmin MyPass12345   # 指定用户名与密码
 ## 测试
 
 ```powershell
-pnpm test        # 共享层单元测试（12 条）
-pnpm test:api    # 后端协议端到端（33 条，需先 pnpm dev:api）
-pnpm test:e2e    # 浏览器端到端（28 条，需先 pnpm dev）
+pnpm test        # 共享层单元测试（13 条）
+pnpm test:api    # 后端协议端到端（47 条，需先 pnpm dev:api）
+pnpm test:e2e    # 浏览器端到端（26 条，需先 pnpm dev）
 ```
 
 细节见 `tests/README.md`。三层覆盖的关键结论：
 
-- **单元**：LWW（新版本胜出 / 同分墓碑优先）、只让更新的远端覆盖本地、金额「分」整数与键盘 9 位整数 + 2 位小数、CSV 引号转义往返、CSV 错误行定位、导入判重、Zod 拒绝非法流水。
-- **后端**：未登录 401、注册并拿到恢复码、用户名大小写不敏感、错误密码统一文案、5 次失败锁定、改密后旧密码失效、恢复码重置后旧会话失效、设备列表含当前设备、幂等重推被拒、旧版本被拒、新版本被接受、**就地更新能被增量拉到**、墓碑随增量下发、用户状态整包 LWW、非法 payload 400、分页 `hasMore`、退出后 401。
-- **浏览器**：应用从 IndexedDB 正常引导、首启预置 16 条、记一笔落库并在整页刷新后仍在、outbox 记录待推送、旧 localStorage 自动迁移、页面内完成**注册 → 展示恢复码 → 首次全量上传（推送 18 / 拉取 18）**、账号页显示设备、退出登录后本机 18 条仍在、控制台零报错、零未捕获异常。
+- **单元**：LWW（新版本胜出 / 同分墓碑优先）、金额「分」整数与键盘 9 位整数 + 2 位小数、CSV 引号转义往返、CSV 错误行定位、导入判重、Zod 拒绝非法流水。
+- **后端**：未登录 401、注册并拿到恢复码、用户名大小写不敏感、错误密码统一文案、5 次失败锁定、改密后旧密码失效、恢复码重置后旧会话失效、设备列表含当前设备、**实时读写 `/api/data`（GET / upsert / state / replace / clear / reset）**、幂等重推被拒、旧版本被拒、新版本被接受、**就地更新能被增量拉到**、墓碑随增量下发、用户状态整包 LWW、非法 payload 400、分页 `hasMore`、退出后 401。
+- **浏览器**：未登录直接进首页（不弹登录）、点「免费注册」注册后直接进入应用、首页为空账本、记一笔实时写入云端、整页刷新后从云端恢复、账号页显示用户名、退出后回首页、重新登录数据仍在、前端不建 IndexedDB、控制台零报错、零未捕获异常。
 
 构建体积：前端约 444KB（gzip 139KB）。共享层刻意不导出 Zod schema（`@daybook/shared/schemas` 子路径），否则整个 Zod 会被打进客户端，白涨约 100KB。
 
@@ -286,8 +243,8 @@ pnpm test:e2e    # 浏览器端到端（28 条，需先 pnpm dev）
 
 1. **底部导航用 4 项**（首页 / 明细 / 报表 / 我的）。PRD §5.1 写 3 项，但 §5.2 把「首页（今日概览）」列为 L1 页面，且 F1、F5 都引用它，去掉首页会丢失「今日概览」这个核心入口。
 2. **明细的「左滑删除 / 右滑编辑」改为「点击编辑 + 多选批量」**（批量改分类 / 改账户 / 删除）。Web 上滑动手势与页面滚动、选中文本冲突严重，点击 + 多选更可靠，也更容易做无障碍。
-3. **本地备份从 localStorage 移到 IndexedDB**，原因同 P0。
-4. **PRD 未写云同步**（F8 是「本地优先、离线可用」）。云同步作为**可选**能力实现，不登录完全不影响使用。
+3. **备份从本地快照改为云端 JSON 整体替换**（`/api/data/replace`）。
+4. **PRD 写的是「本地优先、离线可用」**；现改为**云端为准、记账需登录**，账本实时读写后端（无本地库、无增量同步、浏览器不留副本）。这是本轮架构调整，PRD 原文尚未同步改写。
 
 ---
 

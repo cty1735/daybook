@@ -169,7 +169,7 @@ export function HomeScreen() {
           </div>
         </div>
         <div className="xsmall muted-2 center" style={{ marginTop: 10 }}>
-          记账 3 秒一笔 · 数据只存在你的设备上
+          记账 3 秒一笔 · 数据实时保存在云端
         </div>
       </div>
 
@@ -192,7 +192,7 @@ export function HomeScreen() {
       </div>
 
       <div className="xsmall muted-2 center" style={{ marginTop: 18, opacity: 0.8 }}>
-        {activeTxs(store.transactions).length} 条记录 · 本地存储
+        {activeTxs(store.transactions).length} 条记录 · 云端已同步
       </div>
     </div>
   );

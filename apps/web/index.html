@@ -20,12 +20,7 @@
       // 提前应用主题，避免闪白（跟随 localStorage 中的设置）
       (function () {
         try {
-          var raw = localStorage.getItem("daybook.v1");
-          var mode = "system";
-          if (raw) {
-            var parsed = JSON.parse(raw);
-            mode = (parsed && parsed.state && parsed.state.settings && parsed.state.settings.theme) || "system";
-          }
+          var mode = localStorage.getItem("daybook.theme") || "system";
           var dark = mode === "dark" || (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
           document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
         } catch (e) {

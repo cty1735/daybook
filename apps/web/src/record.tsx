@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import { RecordSheet } from "./components/RecordSheet";
 import { useToast } from "./components/feedback";
+import { useNav } from "./nav";
 import { useStore } from "./store/store";
 import { formatMoney } from "@daybook/shared";
 import type { Transaction, TxType } from "@daybook/shared";
@@ -27,10 +28,18 @@ export function RecordProvider({ children }: { children: ReactNode }) {
   });
   const store = useStore();
   const toast = useToast();
+  const nav = useNav();
 
   const open = useCallback(
-    (opts: OpenOpts = {}) => setState({ open: true, editing: opts.editing ?? null, type: opts.type, categoryId: opts.categoryId }),
-    [],
+    (opts: OpenOpts = {}) => {
+      // 未登录：账本只存服务端，没有账号就没法落库，直接引导登录
+      if (useStore.getState().status !== "ready") {
+        nav.push("login");
+        return;
+      }
+      setState({ open: true, editing: opts.editing ?? null, type: opts.type, categoryId: opts.categoryId });
+    },
+    [nav],
   );
   const close = useCallback(() => setState((s) => ({ ...s, open: false })), []);
 

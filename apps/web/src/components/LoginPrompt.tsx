@@ -59,9 +59,9 @@ export function LoginPrompt() {
             <Icon name="lock" size={17} />
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <b style={{ fontSize: 14 }}>注册登录，换手机不丢账本</b>
+            <b style={{ fontSize: 14 }}>登录后开始记账</b>
             <div className="xsmall muted-2" style={{ marginTop: 3, lineHeight: 1.6 }}>
-              不登录也能完整记账，数据只存在本机。登录后可云端备份、换机找回。
+              账本实时保存在云端，换手机登录即可找回。不登录可以先看看界面。
             </div>
           </div>
         </div>
