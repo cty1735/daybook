@@ -5,7 +5,7 @@
   "type": "module",
   "description": "日账 DayBook 后端：Hono + Drizzle + SQLite（libSQL） + better-auth + 增量同步",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "node --watch-preserve-output --watch --import tsx src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json --noEmit",
