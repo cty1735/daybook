@@ -161,7 +161,10 @@ export const useStore = create<Store>()((set, get) => ({
       const merged = await mergeLegacyInto(data);
       if (merged) {
         try {
-          await api.saveTransactions(merged.transactions);
+          // 接口单次最多 2000 条，分批推避免大账本超限
+          for (let i = 0; i < merged.transactions.length; i += 500) {
+            await api.saveTransactions(merged.transactions.slice(i, i + 500));
+          }
           await api.saveState({
             categories: merged.categories,
             accounts: merged.accounts,
