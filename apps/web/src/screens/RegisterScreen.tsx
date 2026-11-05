@@ -7,7 +7,6 @@ import { useToast } from "../components/feedback";
 import { useNav } from "../nav";
 import { api, ApiError } from "../lib/api";
 import { setSessionUser } from "../lib/auth-state";
-import { useStore } from "../store/store";
 
 const USERNAME_RE = /^[A-Za-z0-9_-]{3,20}$/;
 
@@ -86,7 +85,6 @@ export function RegisterScreen() {
       setSessionUser(r.user);
       setRecoveryCode(r.recoveryCode);
       toast.show({ message: "注册成功", duration: 2000 });
-      void useStore.getState().init();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     } finally {
@@ -150,7 +148,9 @@ export function RegisterScreen() {
             className="btn btn-main btn-block"
             onClick={() => {
               toast.show({ message: "已保存，开始记账吧", duration: 2000 });
-              nav.closeAll();
+              // 从同步流程进来的回到同步页，否则回到 Tab
+              if (nav.stack.includes("sync")) nav.popTo("sync");
+              else nav.closeAll();
             }}
           >
             我已保存，进入记账
@@ -255,7 +255,7 @@ export function RegisterScreen() {
           <label className="xsmall" style={{ display: "flex", gap: 8, alignItems: "flex-start", lineHeight: 1.6, marginBottom: 14 }}>
             <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} style={{ marginTop: 2 }} />
             <span className="muted-2">
-              我已阅读并同意《用户协议》与《隐私政策》，了解账本数据实时保存在云端，用于多设备同步与找回。
+              我已阅读并同意《用户协议》与《隐私政策》，了解账本数据默认保存在本机，账号仅用于同步与找回。
             </span>
           </label>
 

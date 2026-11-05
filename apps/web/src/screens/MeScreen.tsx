@@ -19,6 +19,7 @@ export function MeScreen() {
   const toast = useToast();
   const dialog = useDialog();
   const { user: accountUser } = useSessionUser();
+  const outboxPending = store.outboxCount;
 
   const month = useMemo(() => {
     const now = new Date();
@@ -36,6 +37,7 @@ export function MeScreen() {
     { icon: "wallet", title: "账户管理", sub: `${store.accounts.length} 个账户`, onClick: () => nav.push("accounts") },
     { icon: "tag", title: "分类管理", sub: `${store.categories.filter((c) => !c.parentId).length} 个一级分类`, onClick: () => nav.push("categories") },
     { icon: "refresh", title: "周期账单", sub: "固定支出自动生成 · 规划中", onClick: () => nav.push("recurring") },
+    { icon: "swap", title: "云同步", sub: "可选 · 多设备与云备份", onClick: () => nav.push("sync") },
     { icon: "download", title: "导入导出与备份", sub: "CSV / JSON · 不被平台绑架", onClick: () => nav.push("io") },
   ];
 
@@ -89,7 +91,7 @@ export function MeScreen() {
               {accountUser ? accountUser.displayUsername || accountUser.username : "未登录"}
             </span>
             <span className="xsmall muted-2">
-              {accountUser ? "点击查看账号与设备" : "登录后账本实时同步到云端"}
+              {accountUser ? `${outboxPending} 条待上传 · 点击查看账号与设备` : "登录以开启多设备同步与换机找回"}
             </span>
           </span>
           <span className="chev">
@@ -260,7 +262,7 @@ export function MeScreen() {
         <div className="xsmall muted-2" style={{ marginTop: 16, lineHeight: 1.7 }}>
           日账 DayBook · v1.0 MVP
           <br />
-          数据实时保存在云端，多设备一致，不接入广告 SDK
+          数据默认只存在本地，不上传、不接入广告 SDK
         </div>
       </div>
 

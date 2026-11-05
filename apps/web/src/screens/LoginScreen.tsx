@@ -8,7 +8,6 @@ import { Switch, useToast } from "../components/feedback";
 import { useNav } from "../nav";
 import { api, ApiError } from "../lib/api";
 import { setSessionUser } from "../lib/auth-state";
-import { useStore } from "../store/store";
 
 export function LoginScreen() {
   const nav = useNav();
@@ -37,8 +36,7 @@ export function LoginScreen() {
       const r = await api.login({ username: username.trim(), password, rememberMe: remember });
       setSessionUser(r.user);
       toast.show({ message: `欢迎回来，${r.user.displayUsername || r.user.username}`, duration: 2200 });
-      void useStore.getState().init();
-      nav.closeAll();
+      nav.pop();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : String(e));
     } finally {
@@ -47,11 +45,11 @@ export function LoginScreen() {
   };
 
   return (
-    <SubPage title="登录" subtitle="实时同步 · 换机找回" onBack={nav.pop}>
+    <SubPage title="登录" subtitle="多设备同步 · 换机找回" onBack={nav.pop}>
       <div className="section">
         <div className="card">
           <div className="xsmall muted-2" style={{ marginBottom: 14, lineHeight: 1.7 }}>
-            登录后账本实时保存在云端，多设备自动一致，换机登录即可恢复。
+            登录只用于把账本同步到云端与换机找回，不登录也能完整记账。数据默认只存在本机。
           </div>
 
           <div className="field" style={{ marginBottom: 12 }}>
@@ -137,9 +135,9 @@ export function LoginScreen() {
         <div className="card tight">
           <div className="xsmall muted-2" style={{ lineHeight: 1.85 }}>
             <b style={{ color: "var(--t1)" }}>账号能做什么</b>
-            <br />· 同一本账，多个设备实时一致
+            <br />· 同一本账，多个设备随时看
             <br />· 换手机登录即恢复
-            <br />· 账本实时保存在云端，不占本机空间
+            <br />· 不登录也不影响记账、导出与本地备份
           </div>
         </div>
       </div>

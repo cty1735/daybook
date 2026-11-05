@@ -1,6 +1,9 @@
 /* 全局状态：数据 + 动作
-   服务端为准：启动时从 /api/data 拉取完整账本，写操作乐观更新内存后实时回写接口。
-   不再有 IndexedDB / outbox / 同步引擎；必须登录才能使用。 */
+   P0 改动：持久化从 localStorage（zustand/persist）换成 IndexedDB（Dexie）
+   - 支持 5 万条量级与索引化查询（PRD §11）
+   - 写入非阻塞主线程，不再每次全量 JSON.stringify 同步落盘
+   - 同时维护 outbox 待推送队列与同步游标，为云同步（P1）预埋
+*/
 
 import { create } from "zustand";
 import {
@@ -11,6 +14,9 @@ import {
   buildDefaultSettings,
   buildDemoTransactions,
   buildInitialData,
+  isLegacyDemoLedger,
+  mergeTransactions,
+  resolveLWW,
   uid,
   type Account,
   type AppData,
@@ -20,9 +26,19 @@ import {
   type ThemeMode,
   type Transaction,
   type TxType,
+  type UserState,
 } from "@daybook/shared";
-import { api } from "../lib/api";
-import { markLegacyImported, mergeLegacyInto } from "../lib/legacy-import";
+import {
+  DEFAULT_SYNC_META,
+  META,
+  db,
+  loadAll,
+  readMeta,
+  repo,
+  writeMeta,
+  type LastUsed,
+  type SyncMeta,
+} from "../lib/db";
 
 export interface NewTxInput {
   type: TxType;
@@ -35,16 +51,19 @@ export interface NewTxInput {
   note: string;
 }
 
-export type StoreStatus = "loading" | "anon" | "ready" | "error";
-
 interface MetaState {
-  status: StoreStatus;
+  /** IndexedDB 是否已加载完成（首屏据此显示骨架） */
+  hydrated: boolean;
   initError: string | null;
+  outboxCount: number;
+  sync: SyncMeta;
+  deviceId: string;
+  /** 是否从旧的 localStorage 迁移而来（用于提示） */
+  migratedFromLegacy: boolean;
 }
 
 interface Actions {
   init: () => Promise<void>;
-  logout: () => void;
 
   addTransaction: (input: NewTxInput) => Transaction;
   updateTransaction: (id: string, patch: Partial<Transaction>) => void;
@@ -74,60 +93,28 @@ interface Actions {
   loadDemoData: () => void;
   resetAll: () => void;
   replaceAll: (data: Partial<AppData>) => string | null;
+
+  /* -------- 同步相关（P1 使用，P0 先打通数据通道） -------- */
+  refreshOutboxCount: () => Promise<void>;
+  setSyncMeta: (patch: Partial<SyncMeta>) => void;
+  applyRemoteTransactions: (remote: Transaction[]) => number;
+  applyRemoteUserState: (state: UserState, updatedAt: number) => boolean;
+  snapshotUserState: () => UserState;
+  clearOutbox: () => Promise<void>;
 }
 
 export type Store = AppData & MetaState & Actions;
 
-/* ---------------------------- 持久化辅助 ---------------------------- */
+const initial = buildInitialData();
 
-type ErrorHandler = (message: string) => void;
-let errorHandler: ErrorHandler | null = null;
-
-/** 由 App 外壳注册，把写失败弹成 toast（store 本身不依赖 React） */
-export function setApiErrorHandler(fn: ErrorHandler | null): void {
-  errorHandler = fn;
+/** 用户级状态变更后统一打标（用于整包 LWW 与 outbox） */
+function touchState(get: () => Store): void {
+  const at = Date.now();
+  get().setSyncMeta({ stateUpdatedAt: at });
+  void db.outbox.add({ entity: "state", entityId: "self", op: "upsert", at });
 }
 
-function reportError(e: unknown): void {
-  console.error("[daybook] 保存失败:", e);
-  errorHandler?.(e instanceof Error ? e.message : String(e));
-}
-
-function persistTransactions(txs: Transaction[]): void {
-  if (!txs.length) return;
-  void api.saveTransactions(txs).catch(reportError);
-}
-
-let stateTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** 分类/账户/预算/偏好改动：合并 300ms 内多次变更，整包提交 */
-function persistState(get: () => Store): void {
-  if (stateTimer) clearTimeout(stateTimer);
-  stateTimer = setTimeout(() => {
-    stateTimer = null;
-    const s = get();
-    void api
-      .saveState({
-        categories: s.categories,
-        accounts: s.accounts,
-        budget: s.budget,
-        settings: s.settings,
-        categoryUsage: s.categoryUsage,
-        lastUsedCategoryId: s.lastUsedCategoryId,
-        lastUsedAccountId: s.lastUsedAccountId,
-      })
-      .catch(reportError);
-  }, 300);
-}
-
-function flushStateTimer(): void {
-  if (stateTimer) {
-    clearTimeout(stateTimer);
-    stateTimer = null;
-  }
-}
-
-/** 主题镜像到 localStorage，只为「首屏内联脚本」在 hydration 之前定色，避免闪白 */
+/** 主题额外镜像到 localStorage，只为「首屏内联脚本」能在 hydration 之前定色，避免闪白 */
 function mirrorTheme(theme: ThemeMode): void {
   try {
     localStorage.setItem("daybook.theme", theme);
@@ -136,64 +123,68 @@ function mirrorTheme(theme: ThemeMode): void {
   }
 }
 
-const initial = buildInitialData();
-
 export const useStore = create<Store>()((set, get) => ({
   ...initial,
-  status: "loading",
+  hydrated: false,
   initError: null,
+  outboxCount: 0,
+  sync: { ...DEFAULT_SYNC_META },
+  deviceId: "",
+  migratedFromLegacy: false,
 
   /* ------------------------------ 启动 ------------------------------ */
   init: async () => {
-    // 首次启动 / 失败重试才显示引导屏；登录后的静默刷新不要卸载界面，
-    // 否则注册页的恢复码、当前页面栈都会丢。
-    const cur = get().status;
-    if (cur === "loading" || cur === "error") set({ status: "loading", initError: null });
     try {
-      const user = await api.session();
-      if (!user) {
-        set({ status: "anon" });
-        return;
-      }
-      const data = await api.getData();
+      let data = await loadAll();
+      let migrated = false;
 
-      // 首次切到服务端：把旧版本地 IndexedDB 里还没上传的账本合并上来（只做一次）
-      const merged = await mergeLegacyInto(data);
-      if (merged) {
-        try {
-          // 接口单次最多 2000 条，分批推避免大账本超限
-          for (let i = 0; i < merged.transactions.length; i += 500) {
-            await api.saveTransactions(merged.transactions.slice(i, i + 500));
-          }
-          await api.saveState({
-            categories: merged.categories,
-            accounts: merged.accounts,
-            budget: merged.budget,
-            settings: merged.settings,
-            categoryUsage: merged.categoryUsage,
-            lastUsedCategoryId: merged.lastUsedCategoryId,
-            lastUsedAccountId: merged.lastUsedAccountId,
-          });
-          markLegacyImported();
-          const fresh = await api.getData();
-          set({ ...fresh, status: "ready", initError: null });
-          mirrorTheme(fresh.settings.theme);
-          return;
-        } catch {
-          /* 搬家失败不阻断启动：下次登录会重试 */
+      // 一次性迁移：把旧的 localStorage（zustand/persist 格式）搬进 IndexedDB
+      if (!data) {
+        const legacy = readLegacyLocalStorage();
+        if (legacy) {
+          await repo.saveAll(legacy);
+          data = legacy;
+          migrated = true;
+          await writeMeta(META.migrated, true);
         }
       }
 
-      set({ ...data, status: "ready", initError: null });
-      mirrorTheme(data.settings.theme);
-    } catch (err) {
-      set({ status: "error", initError: err instanceof Error ? err.message : String(err) });
-    }
-  },
+      if (!data) {
+        // 全新安装：默认分类/账户/预算；不预置任何示例流水，账本从零开始
+        const fresh = buildInitialData();
+        await repo.saveAll(fresh);
+        data = fresh;
+      }
 
-  logout: () => {
-    flushStateTimer();
-    set({ ...buildInitialData(), status: "anon", initError: null });
+      const [sync, deviceId, legacySeeded] = await Promise.all([
+        repo.getSyncMeta(),
+        repo.deviceId(),
+        readMeta<boolean>(META.seeded, false),
+      ]);
+      let transactions = data.transactions;
+
+      // 一次性清理：旧版本自动预置、且整本流水都是示例账单 → 置空
+      // （只在「全部为示例数据」时触发，绝不会删掉用户自己记的账）
+      if (legacySeeded && isLegacyDemoLedger(transactions)) {
+        transactions = [];
+        await repo.clearTransactions();
+      }
+
+      set({
+        ...data,
+        transactions,
+        hydrated: true,
+        initError: null,
+        sync,
+        deviceId,
+        migratedFromLegacy: migrated,
+        outboxCount: 0,
+      });
+      mirrorTheme(data.settings.theme);
+      await get().refreshOutboxCount();
+    } catch (err) {
+      set({ hydrated: true, initError: err instanceof Error ? err.message : String(err) });
+    }
   },
 
   /* ---------------------------- 流水 ---------------------------- */
@@ -223,8 +214,10 @@ export const useStore = create<Store>()((set, get) => ({
         ? { ...s.categoryUsage, [input.categoryId]: (s.categoryUsage[input.categoryId] ?? 0) + 1 }
         : s.categoryUsage,
     }));
-    persistTransactions([tx]);
-    persistState(get);
+    void repo.putTransactions([tx]);
+    void repo.setMeta(META.lastUsed, { categoryId: get().lastUsedCategoryId, accountId: get().lastUsedAccountId } satisfies LastUsed);
+    if (input.categoryId) void repo.setMeta(META.categoryUsage, get().categoryUsage);
+    void get().refreshOutboxCount();
     return tx;
   },
 
@@ -232,7 +225,10 @@ export const useStore = create<Store>()((set, get) => ({
     const next = get().transactions.map((t) => (t.id === id ? { ...t, ...patch, updatedAt: Date.now() } : t));
     set({ transactions: next });
     const tx = next.find((t) => t.id === id);
-    if (tx) persistTransactions([tx]);
+    if (tx) {
+      void repo.putTransactions([tx]);
+      void get().refreshOutboxCount();
+    }
   },
 
   softDeleteTransaction: (id) => {
@@ -240,20 +236,23 @@ export const useStore = create<Store>()((set, get) => ({
     const next = get().transactions.map((t) => (t.id === id ? { ...t, deletedAt: at, updatedAt: at } : t));
     set({ transactions: next });
     const tx = next.find((t) => t.id === id);
-    if (tx) persistTransactions([tx]);
+    if (tx) {
+      void repo.putTransactions([tx]);
+      void get().refreshOutboxCount();
+    }
   },
 
   restoreTransaction: (id) => {
     const next = get().transactions.map((t) => (t.id === id ? { ...t, deletedAt: null, updatedAt: Date.now() } : t));
     set({ transactions: next });
     const tx = next.find((t) => t.id === id);
-    if (tx) persistTransactions([tx]);
+    if (tx) void repo.putTransactions([tx]);
   },
 
   purgeTransaction: (id) =>
     set((s) => {
       const tx = s.transactions.find((t) => t.id === id);
-      if (tx) persistTransactions([{ ...tx, deletedAt: Date.now(), updatedAt: Date.now() }]);
+      if (tx) void repo.putTransactions([{ ...tx, deletedAt: Date.now(), updatedAt: Date.now() }]);
       return { transactions: s.transactions.filter((t) => t.id !== id) };
     }),
 
@@ -262,20 +261,26 @@ export const useStore = create<Store>()((set, get) => ({
     const at = Date.now();
     const next = get().transactions.map((t) => (targets.has(t.id) ? { ...t, ...patch, updatedAt: at } : t));
     set({ transactions: next });
-    persistTransactions(next.filter((t) => targets.has(t.id)));
+    void repo.putTransactions(next.filter((t) => targets.has(t.id)));
+    void get().refreshOutboxCount();
   },
 
   /* ---------------------------- 分类 ---------------------------- */
   addCategory: (input) => {
     const cat: Category = { ...input, id: uid("cat"), sortOrder: get().categories.length };
     set((s) => ({ categories: [...s.categories, cat] }));
-    persistState(get);
+    void repo.putCategories([cat]);
+    touchState(get);
+    void get().refreshOutboxCount();
     return cat;
   },
 
   updateCategory: (id, patch) => {
-    set((s) => ({ categories: s.categories.map((c) => (c.id === id ? { ...c, ...patch } : c)) }));
-    persistState(get);
+    const next = get().categories.map((c) => (c.id === id ? { ...c, ...patch } : c));
+    set({ categories: next });
+    const cat = next.find((c) => c.id === id);
+    if (cat) void repo.putCategories([cat]);
+    touchState(get);
   },
 
   deleteCategory: (id) => {
@@ -302,27 +307,34 @@ export const useStore = create<Store>()((set, get) => ({
       transactions: nextTxs,
       budget: { ...s.budget, categoryLimits: limits },
     }));
-    if (changed.length) persistTransactions(changed);
-    persistState(get);
+    void repo.deleteCategoryRows(removedIds);
+    if (changed.length) void repo.putTransactions(changed);
+    void repo.setMeta(META.budget, get().budget);
+    touchState(get);
     return { moved };
   },
 
   bumpCategoryUsage: (id) => {
-    set((s) => ({ categoryUsage: { ...s.categoryUsage, [id]: (s.categoryUsage[id] ?? 0) + 1 } }));
-    persistState(get);
+    const next = { ...get().categoryUsage, [id]: (get().categoryUsage[id] ?? 0) + 1 };
+    set({ categoryUsage: next });
+    void repo.setMeta(META.categoryUsage, next);
   },
 
   /* ---------------------------- 账户 ---------------------------- */
   addAccount: (input) => {
     const acc: Account = { ...input, id: uid("acc") };
     set((s) => ({ accounts: [...s.accounts, acc] }));
-    persistState(get);
+    void repo.putAccounts([acc]);
+    touchState(get);
     return acc;
   },
 
   updateAccount: (id, patch) => {
-    set((s) => ({ accounts: s.accounts.map((a) => (a.id === id ? { ...a, ...patch } : a)) }));
-    persistState(get);
+    const next = get().accounts.map((a) => (a.id === id ? { ...a, ...patch } : a));
+    set({ accounts: next });
+    const acc = next.find((a) => a.id === id);
+    if (acc) void repo.putAccounts([acc]);
+    touchState(get);
   },
 
   removeAccount: (id) => {
@@ -333,7 +345,8 @@ export const useStore = create<Store>()((set, get) => ({
       accounts: remaining,
       lastUsedAccountId: s.lastUsedAccountId === id ? (remaining[0]?.id ?? null) : s.lastUsedAccountId,
     }));
-    persistState(get);
+    void repo.deleteAccountRows([id]);
+    touchState(get);
     return { ok: true };
   },
 
@@ -370,52 +383,52 @@ export const useStore = create<Store>()((set, get) => ({
       source: "adjustment",
     };
     set((s) => ({ transactions: [tx, ...s.transactions] }));
-    persistTransactions([tx]);
+    void repo.putTransactions([tx]);
     return tx;
   },
 
   /* ---------------------------- 预算 ---------------------------- */
   setBudget: (patch) => {
     set((s) => ({ budget: { ...s.budget, ...patch } }));
-    persistState(get);
+    void repo.setMeta(META.budget, get().budget);
+    touchState(get);
   },
 
   setCategoryLimit: (categoryId, limit) => {
-    set((s) => {
-      const limits = { ...s.budget.categoryLimits };
-      if (limit === null) delete limits[categoryId];
-      else limits[categoryId] = limit;
-      return { budget: { ...s.budget, categoryLimits: limits } };
-    });
-    persistState(get);
+    const limits = { ...get().budget.categoryLimits };
+    if (limit === null) delete limits[categoryId];
+    else limits[categoryId] = limit;
+    set((s) => ({ budget: { ...s.budget, categoryLimits: limits } }));
+    void repo.setMeta(META.budget, get().budget);
+    touchState(get);
   },
 
   /* ---------------------------- 偏好 ---------------------------- */
   setTheme: (theme) => {
     set((s) => ({ settings: { ...s.settings, theme } }));
     mirrorTheme(theme);
-    persistState(get);
+    void repo.setMeta(META.settings, get().settings);
+    touchState(get);
   },
 
   setSetting: (key, value) => {
     set((s) => ({ settings: { ...s.settings, [key]: value } }));
     if (key === "theme") mirrorTheme(value as ThemeMode);
-    persistState(get);
+    void repo.setMeta(META.settings, get().settings);
+    touchState(get);
   },
 
   /* ---------------------------- 数据批量 ---------------------------- */
   importTransactions: (txs) => {
     set((s) => ({ transactions: [...txs, ...s.transactions] }));
-    persistTransactions(txs);
+    void repo.putTransactions(txs);
+    void get().refreshOutboxCount();
     return txs.length;
   },
 
   clearTransactions: () => {
     set({ transactions: [] });
-    void api.clearTransactions().catch((e) => {
-      reportError(e);
-      void get().init();
-    });
+    void repo.clearTransactions();
   },
 
   loadDemoData: () => {
@@ -432,47 +445,131 @@ export const useStore = create<Store>()((set, get) => ({
       categoryUsage: base.categoryUsage,
     });
     set({ transactions: txs });
-    persistTransactions(txs);
+    void repo.putTransactions(txs, false);
   },
 
   resetAll: () => {
-    flushStateTimer();
-    void api
-      .resetData()
-      .then((data) => {
-        set({ ...data, status: "ready", initError: null });
-        mirrorTheme(data.settings.theme);
-      })
-      .catch(reportError);
+    const fresh = buildInitialData();
+    set({ ...fresh, outboxCount: 0 });
+    void repo.saveAll(fresh);
+    void repo.clearOutbox();
   },
 
   replaceAll: (data) => {
     if (data.schemaVersion !== undefined && data.schemaVersion > SCHEMA_VERSION) {
       return `备份来自更高版本（v${data.schemaVersion}），当前仅支持 v${SCHEMA_VERSION}`;
     }
-    const next: AppData = {
-      schemaVersion: SCHEMA_VERSION,
+    const next = {
       accounts: data.accounts?.length ? data.accounts : buildDefaultAccounts(),
       categories: data.categories?.length ? data.categories : buildDefaultCategories(),
       transactions: data.transactions ?? [],
       budget: { ...buildDefaultBudget(), ...(data.budget ?? {}) },
       settings: { ...buildDefaultSettings(), ...(data.settings ?? {}) },
+      schemaVersion: SCHEMA_VERSION,
       lastUsedCategoryId: data.lastUsedCategoryId ?? null,
       lastUsedAccountId: data.lastUsedAccountId ?? null,
       categoryUsage: data.categoryUsage ?? {},
     };
-    flushStateTimer();
-    set({ ...next });
-    void api
-      .replaceData(next)
-      .then((saved) => {
-        set({ ...saved, status: "ready", initError: null });
-        mirrorTheme(saved.settings.theme);
-      })
-      .catch((e) => {
-        reportError(e);
-        void get().init();
-      });
+    set(next);
+    void repo.saveAll({ ...next });
+    void repo.clearOutbox();
     return null;
   },
+
+  /* ---------------------------- 同步 ---------------------------- */
+  refreshOutboxCount: async () => {
+    const n = await repo.outboxSize();
+    set({ outboxCount: n });
+  },
+
+  setSyncMeta: (patch) => {
+    const next = { ...get().sync, ...patch };
+    set({ sync: next });
+    void repo.setMeta(META.sync, next);
+  },
+
+  applyRemoteTransactions: (remote) => {
+    if (!remote.length) return 0;
+    const merged = mergeTransactions(get().transactions, remote);
+    let changed = 0;
+    const byId = new Map(get().transactions.map((t) => [t.id, t]));
+    for (const r of remote) {
+      const l = byId.get(r.id);
+      if (!l || resolveLWW(l, r) === "remote") changed++;
+    }
+    set({ transactions: merged });
+    if (changed) void repo.putTransactions(remote, false);
+    return changed;
+  },
+
+  applyRemoteUserState: (state, updatedAt) => {
+    if (updatedAt <= get().sync.stateUpdatedAt) return false;
+    set((s) => ({
+      categories: state.categories,
+      accounts: state.accounts,
+      budget: state.budget,
+      settings: state.settings,
+      categoryUsage: state.categoryUsage,
+      lastUsedCategoryId: state.lastUsedCategoryId,
+      lastUsedAccountId: state.lastUsedAccountId,
+      sync: { ...s.sync, stateUpdatedAt: updatedAt },
+    }));
+    void repo.saveAll({
+      schemaVersion: SCHEMA_VERSION,
+      categories: state.categories,
+      accounts: state.accounts,
+      transactions: get().transactions,
+      budget: state.budget,
+      settings: state.settings,
+      lastUsedCategoryId: state.lastUsedCategoryId,
+      lastUsedAccountId: state.lastUsedAccountId,
+      categoryUsage: state.categoryUsage,
+    });
+    return true;
+  },
+
+  snapshotUserState: () => {
+    const s = get();
+    return {
+      categories: s.categories,
+      accounts: s.accounts,
+      budget: s.budget,
+      settings: s.settings,
+      categoryUsage: s.categoryUsage,
+      lastUsedCategoryId: s.lastUsedCategoryId,
+      lastUsedAccountId: s.lastUsedAccountId,
+    } satisfies UserState;
+  },
+
+  clearOutbox: async () => {
+    await repo.clearOutbox();
+    set({ outboxCount: 0 });
+  },
 }));
+
+/* ------------------------------------------------------------------
+   P0：把旧的 localStorage 数据一次性迁移过来（zustand/persist 格式）
+   ------------------------------------------------------------------ */
+function readLegacyLocalStorage(): AppData | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem("daybook.v1");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { state?: Partial<AppData> } | Partial<AppData>;
+    const s = (parsed as { state?: Partial<AppData> }).state ?? (parsed as Partial<AppData>);
+    if (!s || !Array.isArray(s.categories) || !s.categories.length) return null;
+    return {
+      schemaVersion: s.schemaVersion ?? SCHEMA_VERSION,
+      categories: s.categories,
+      accounts: s.accounts?.length ? s.accounts : buildDefaultAccounts(),
+      transactions: s.transactions ?? [],
+      budget: { ...buildDefaultBudget(), ...(s.budget ?? {}) },
+      settings: { ...buildDefaultSettings(), ...(s.settings ?? {}) },
+      lastUsedCategoryId: s.lastUsedCategoryId ?? null,
+      lastUsedAccountId: s.lastUsedAccountId ?? null,
+      categoryUsage: s.categoryUsage ?? {},
+    };
+  } catch {
+    return null;
+  }
+}

@@ -1,7 +1,7 @@
 /* 后端 API 客户端
    开发期通过 Vite 代理把 /api 转发到 http://127.0.0.1:3001（同源 → Cookie 正常）。 */
 
-import type { AppData, SyncPullResult, SyncPushResult, Transaction, UserState } from "@daybook/shared";
+import type { SyncPullResult, SyncPushResult, Transaction, UserState } from "@daybook/shared";
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "";
 
@@ -145,41 +145,5 @@ export const api = {
 
   async pull(cursor: number, limit = 500): Promise<SyncPullResult> {
     return request(`/api/sync/pull?cursor=${cursor}&limit=${limit}`);
-  },
-
-  /* ------------------- 实时读写（服务端为准） ------------------- */
-
-  /** 拉取当前用户的完整账本 */
-  async getData(): Promise<AppData> {
-    return request("/api/data");
-  },
-
-  /** 幂等 upsert 一批流水（含墓碑） */
-  async saveTransactions(transactions: Transaction[]): Promise<{ accepted: number; rejected: number }> {
-    const r = await request<{ accepted: number; rejected: number }>("/api/data/transactions", {
-      method: "POST",
-      json: { transactions },
-    });
-    return r ?? { accepted: 0, rejected: 0 };
-  },
-
-  /** 保存用户级状态（分类 / 账户 / 预算 / 偏好，整包） */
-  async saveState(state: UserState): Promise<void> {
-    await request("/api/data/state", { method: "PUT", json: state });
-  },
-
-  /** 清空当前用户流水 */
-  async clearTransactions(): Promise<void> {
-    await request("/api/data/transactions", { method: "DELETE" });
-  },
-
-  /** 恢复出厂设置，返回重建后的账本 */
-  async resetData(): Promise<AppData> {
-    return request("/api/data/reset", { method: "POST", json: {} });
-  },
-
-  /** 用备份整体替换，返回替换后的账本 */
-  async replaceData(data: AppData): Promise<AppData> {
-    return request("/api/data/replace", { method: "POST", json: data });
   },
 };

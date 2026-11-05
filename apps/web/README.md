@@ -7,21 +7,19 @@
 
 ## 运行
 
-**需要先跑后端**（账本是云端真相源，没有后端就没有账本）：
-
 ```powershell
 cd daybook
-pnpm install
-pnpm dev         # api(3001) + web(5173) + admin(5174)，只访问 http://localhost:5173
+npm install
+npm run dev      # http://localhost:5173
 ```
 
 ```powershell
-pnpm -F @daybook/web build    # 产物在 apps/web/dist/（tsc -b && vite build）
-pnpm -F @daybook/web preview  # 预览构建产物
-pnpm -F @daybook/web lint     # oxlint
+npm run build    # 产物在 dist/（tsc -b && vite build）
+npm run preview  # 本地预览构建产物
+npm run lint     # oxlint
 ```
 
-首次打开是一本空账（不预置示例账单，账户余额与预算也是 0），**必须先注册/登录**才能记账；
+首次打开是一本空账（不预置示例账单，账户余额与预算也是 0）；
 想查看报表效果可在 **我的 → 数据 → 载入示例数据**，随后可「清空所有记录」或「恢复出厂设置」。
 
 ## 技术栈
@@ -29,11 +27,11 @@ pnpm -F @daybook/web lint     # oxlint
 | 层 | 选择 |
 |---|---|
 | 构建 | Vite 8 + React 19 + TypeScript |
-| 状态 | Zustand（纯内存 store，每次写入实时回写后端） |
+| 状态 | Zustand（`persist` 中间件 → localStorage） |
 | 样式 | 原生 CSS + 设计 Token（`src/styles/tokens.css`），无 UI 框架 |
 | 图表 | 自绘 SVG（环形图 / 柱状图 / 折线图 / 条形图） |
 | 图标 | 自绘线性圆头 SVG 图标集（`src/icons/Icon.tsx`） |
-| 后端 | 必需。账本实时读写 `/api/data`，浏览器只留 `localStorage["daybook.theme"]` 做首屏定色 |
+| 后端 | 无。全部数据存本地，符合 PRD「本地优先、离线可用」 |
 
 ## 目录结构
 
@@ -46,17 +44,18 @@ src/
   styles/             tokens.css / base.css / components.css
   icons/Icon.tsx      线性图标集
   lib/
-    api.ts            后端客户端（/api/auth/* + /api/data 实时读写）
-    auth-state.ts     会话用户缓存
-    csv.ts            CSV 导入导出（浏览器侧下载 / 解析）
-    legacy-import.ts  旧版本地账本（IndexedDB）一次性搬家
+    types.ts          数据模型（对齐 PRD §9）
+    money.ts          金额工具（内部一律「分」存储）
+    date.ts           日期 / 预算周期
     select.ts         分类树 / 账户展示选择器
-  store/store.ts      纯内存 store + 乐观写入后回写后端
+    stats.ts          统计、预算状态、洞察规则引擎（R1–R6）
+    csv.ts            CSV 导入导出（别名容错 / 逐行报错 / 重复检测）
+    backup.ts         本地每日自动备份（保留 7 份）
+    seed.ts           默认分类（12 一级 + 二级 + 收入）、账户、示例数据
+  store/store.ts      Zustand store + localStorage 持久化
   components/         TxRow / RecordSheet / AmountKeypad / Charts / SubPage / …
-  screens/            Home / Ledger / Report / Me / Budget / Accounts / Categories / ImportExport / Recurring / Login / Register / Forgot
+  screens/            Home / Ledger / Report / Me / Budget / Accounts / Categories / ImportExport / Recurring
 ```
-
-领域层（类型、金额、日期、统计、CSV 解析、同步协议）在 `packages/shared`，前端直接引源码。
 
 ## PRD 覆盖情况
 
@@ -68,24 +67,22 @@ src/
 | F4 | 明细列表 | ✅ 按日分组合计、搜索（防抖）、时间/类型筛选、多选批量改分类/账户/删除 |
 | F5 | 月度预算 | ✅ 总预算 + 分类预算、自定义起始日、三层状态、日均可用 |
 | F6 | 报表与洞察 | ✅ 月/年切换、三数字卡、环形图 + 环比、日柱状/月折线、账户分布、洞察卡片 |
-| F7 | 导入 / 导出 / 备份 | ✅ CSV（BOM、别名映射、逐行错误）、JSON 完整备份（云端整体替换）、模板下载、导入预览 |
-| F8 | 离线 + 本地优先 | ❌ **已改为云端为准**：必须登录，账本实时读写后端，无本地库、无离线模式 |
+| F7 | 导入 / 导出 / 备份 | ✅ CSV（BOM、别名映射、逐行错误）、JSON 完整备份、模板下载、导入预览、每日快照 |
+| F8 | 离线 + 本地优先 | ✅ localStorage、软删除字段预留、无网络依赖 |
 | — | 深色模式 | ✅ 仅浅色 / 跟随系统 / 仅深色，PRD §10.2 深色色值 |
 | F9 | 周期账单 | 🕐 占位页（v1.1 规划中） |
 
-### 与 PRD 的三处主动偏离
+### 与 PRD 的两处主动偏离
 
 1. **底部导航 4 项（首页 / 明细 / 报表 / 我的）**。PRD §5.1 写的是 3 项（明细/报表/我的），
    但 §5.2 把「首页（今日概览）」列为 L1 页面，且 F1/F5 都引用首页。为保证首页可用，保留 4 项（≤5，符合移动端导航规范）。
 2. **明细的「左滑删除 / 右滑编辑」改为「点击编辑 + 多选批量」**。Web 端滑动手势体验不佳且易误触；
    编辑能力通过点击行进入抽屉实现，删除/批量能力通过多选模式实现。
-3. **F8 从「本地优先、离线可用」改为「云端为准、必须登录」**。账本实时读写 `/api/data`，
-   浏览器不再保存账本（Dexie / IndexedDB / outbox 已全部删除），只剩主题镜像。
 
 ## 已验证
 
 用 Chrome DevTools Protocol 做了真机视口（320 / 360 / 430 / 768）自动化冒烟测试，覆盖：
-记账 → 实时写入云端 → 整页刷新后数据仍在；Toast → 撤销；金额 0 时「完成」置灰；9 位上限提示；
+记账 → 计数 +1 → Toast → 撤销 → 计数还原；金额 0 时「完成」置灰；9 位上限提示；
 多选批量删除 → 撤销；CSV 导入（可导入 2 / 异常 1，逐行原因）；表格深链；
 深色模式切换；**全部页面在 320–768 宽下无横向溢出**；控制台零报错。
 

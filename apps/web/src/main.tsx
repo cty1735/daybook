@@ -6,7 +6,7 @@ import "./styles/components.css";
 import { App } from "./App";
 import { useStore } from "./store/store";
 
-// 启动时校验会话并拉取账本；App 在加载完成前显示引导屏
+// 先把 IndexedDB 里的数据装载进内存 store；App 在 hydrated 之前显示引导屏
 void useStore.getState().init();
 
 createRoot(document.getElementById("root")!).render(
