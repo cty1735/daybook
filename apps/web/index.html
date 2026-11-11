@@ -28,6 +28,30 @@
         }
       })();
     </script>
+    <!-- 百度统计：kuokuokk.cc.cd 全站共用一个点位，靠 URL 路径区分 /todaynews 与 /daybook -->
+    <script>
+      (function () {
+        if (/^(localhost|[\d.]+|\[.*\])$/.test(location.hostname)) return
+        var _hmt = (window._hmt = window._hmt || [])
+        var hm = document.createElement("script")
+        hm.async = true
+        hm.src = "https://hm.baidu.com/hm.js?5a10f2bd21093e9da0a2c238ce1507a0"
+        document.head.appendChild(hm)
+        // SPA 内部跳转不刷新页面，手动补一条 PV（首屏 hm.js 自己会记）
+        var last = location.pathname + location.search
+        var report = function () {
+          var now = location.pathname + location.search
+          if (now === last) return
+          last = now
+          _hmt.push(["_trackPageview", now])
+        }
+        var push = history.pushState
+        var replace = history.replaceState
+        history.pushState = function () { push.apply(this, arguments); report() }
+        history.replaceState = function () { replace.apply(this, arguments); report() }
+        addEventListener("popstate", report)
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>
